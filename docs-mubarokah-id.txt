@@ -1,0 +1,2092 @@
+# OAuth 2.0 Flows
+
+> Detailed explanation of the OAuth 2.0 Authorization Code Grant and Refresh Token flows used by Mubarokah ID.
+
+# OAuth 2.0 Flows
+
+Mubarokah ID primarily uses the **OAuth 2.0 Authorization Code Grant** for third-party application authentication. This flow is designed for applications that can securely store a client secret. Additionally, a **Refresh Token Flow** is provided to obtain new access tokens without requiring user re-authentication.
+
+## Authorization Code Grant (Recommended)
+
+The Authorization Code Grant is the most common and secure OAuth 2.0 flow. It involves exchanging an authorization code for an access token.
+
+```mermaid  theme={null}
+flowchart TD
+    Start([Application Initiates OAuth]) --> Auth[Redirect to /oauth/authorize]
+    
+    subgraph "User Authentication"
+        Auth --> LoggedIn{User Logged In?}
+        LoggedIn -->|No| Login[Login at Mubarokah ID]
+        LoggedIn -->|Yes| Consent[Review Permissions]
+        Login --> Consent
+    end
+    
+    subgraph "Authorization Decision"
+        Consent --> UserDecision{Grant Consent?}
+        UserDecision -->|Yes| AuthCode[Generate Authorization Code]
+        UserDecision -->|No| Denied[Access Denied]
+    end
+    
+    subgraph "Token Exchange"
+        AuthCode --> Redirect[Redirect to App with Code]
+        Redirect --> Exchange[Exchange Code for Tokens]
+        Exchange --> Valid{Valid Credentials?}
+        Valid -->|Yes| Tokens[Issue Access & Refresh Tokens]
+        Valid -->|No| TokenError[Token Exchange Error]
+    end
+    
+    subgraph "API Access"
+        Tokens --> ApiCall[Call API with Access Token]
+        ApiCall --> Success[User Session Established]
+    end
+    
+    %% End states
+    Denied --> End1([End: Access Denied])
+    TokenError --> End2([End: Integration Error])
+    Success --> End3([End: Authentication Complete])
+    
+    %% Styling
+    classDef successPath fill:#d4edda,stroke:#155724,color:#155724
+    classDef errorPath fill:#f8d7da,stroke:#721c24,color:#721c24
+    classDef processPath fill:#e2e3e5,stroke:#383d41,color:#383d41
+    
+    class AuthCode,Tokens,ApiCall,Success,End3 successPath
+    class Denied,TokenError,End1,End2 errorPath
+    class Auth,Login,Consent,Redirect,Exchange processPath
+```
+
+### Detailed Step-by-Step Implementation
+
+#### Step 1: Authorization Request (User Redirection)
+
+Your application initiates the flow by redirecting the user's browser to Mubarokah ID's authorization endpoint.
+
+```http  theme={null}
+GET /oauth/authorize HTTP/1.1
+Host: accounts.mubarokah.com
+```
+
+**Parameters:**
+
+| Parameter               | Type   | Required | Description                                                                       |
+| ----------------------- | ------ | -------- | --------------------------------------------------------------------------------- |
+| `response_type`         | string | ✅        | Must be `code`.                                                                   |
+| `client_id`             | string | ✅        | Your application's unique Client ID.                                              |
+| `redirect_uri`          | string | ✅        | The URL Mubarokah ID will redirect the user back to. Must match a registered URI. |
+| `scope`                 | string | ❌        | Space-separated list of permissions (e.g., `view-user detail-user`).              |
+| `state`                 | string | 🔸       | An opaque value used to prevent CSRF attacks. Highly recommended.                 |
+| `prompt`                | string | ❌        | Optional. Set to `consent` to force the consent screen even if already approved.  |
+| `code_challenge`        | string | ❌        | PKCE: The code challenge derived from the `code_verifier`. (Public clients)       |
+| `code_challenge_method` | string | ❌        | PKCE: Usually `S256`. (Public clients)                                            |
+
+**Example Redirect URL Construction (JavaScript):**
+
+```javascript  theme={null}
+function generateRandomString(length = 40) {
+  const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+  let result = '';
+  const charactersLength = characters.length;
+  for (let i = 0; i < length; i++) {
+    result += characters.charAt(Math.floor(Math.random() * charactersLength));
+  }
+  return result;
+}
+
+const CLIENT_ID = "your_client_id";
+const REDIRECT_URI = "https://yourapp.com/callback";
+
+// Store state in session to verify later
+const state = generateRandomString();
+sessionStorage.setItem('oauth_state', state);
+
+const authParams = {
+  response_type: 'code',
+  client_id: CLIENT_ID,
+  redirect_uri: REDIRECT_URI,
+  scope: 'view-user detail-user', // Request desired scopes
+  state: state,
+  // For PKCE (typically for mobile/SPA clients without a secure backend for token exchange)
+  // code_challenge: 'generated_code_challenge',
+  // code_challenge_method: 'S256'
+};
+
+const authorizationUrl = \`https://accounts.mubarokah.com/oauth/authorize?\${new URLSearchParams(authParams)}\`;
+// Redirect the user
+window.location.href = authorizationUrl;
+```
+
+#### Step 2: User Authentication & Consent
+
+* The user is prompted to log in to Mubarokah ID (if not already).
+* After successful login, Mubarokah ID displays a consent screen where the user can approve or deny the permissions (scopes) your application is requesting.
+
+```mermaid  theme={null}
+flowchart TD
+    A[User Clicks Login in Your App] --> B{User Authenticated with Mubarokah ID?}
+    B -- No --> C[Mubarokah ID Login Page]
+    C --> E[User Enters Credentials]
+    E -- Valid --> D[Consent Screen: App requests permissions scopes]
+    B -- Yes --> D
+
+    D --> F{User Grants Consent?}
+    F -- Yes --> G[Authorization Code Generated]
+    F -- No --> H[Error: Access Denied]
+
+    G --> I[Redirect to App's redirect_uri with 'code' and 'state']
+    H --> J[Redirect to App's redirect_uri with 'error=access_denied']
+```
+
+#### Step 3: Authorization Code Response (Redirection to Your App)
+
+If the user grants consent, Mubarokah ID redirects the user back to your application's `redirect_uri` with an `authorization_code` and the `state` parameter.
+
+**Example Success Redirect:**
+
+```text  theme={null}
+https://yourapp.com/callback?code=AUTHORIZATION_CODE_HERE&state=YOUR_ORIGINAL_STATE
+```
+
+<Info>
+  Your application should first verify that the received `state` matches the one generated in Step 1 to prevent CSRF attacks.
+</Info>
+
+**Example Error Redirect:** If the user denies access or an error occurs:
+
+```text  theme={null}
+https://yourapp.com/callback?error=access_denied&error_description=The+user+denied+access+to+your+application.&state=YOUR_ORIGINAL_STATE
+```
+
+#### Step 4: Token Exchange (Server-to-Server)
+
+<Warning>
+  This step **must** be performed on your application's backend server, as it requires your `client_secret`.
+</Warning>
+
+Your application exchanges the `authorization_code` for an `access_token` and a `refresh_token` by making a POST request to Mubarokah ID's token endpoint.
+
+```http  theme={null}
+POST /oauth/token HTTP/1.1
+Host: accounts.mubarokah.com
+Content-Type: application/x-www-form-urlencoded
+Authorization: Basic base64(client_id:client_secret) // Only if not sending client_id/secret in body
+```
+
+**`Request Body Parameters (application/x-www-form-urlencoded):`**
+
+| Parameter       | Type   | Required | Description                                                                       |
+| --------------- | ------ | -------- | --------------------------------------------------------------------------------- |
+| `grant_type`    | string | ✅        | Must be `authorization_code`.                                                     |
+| `code`          | string | ✅        | The authorization code received in Step 3.                                        |
+| `redirect_uri`  | string | ✅        | The same `redirect_uri` used in Step 1.                                           |
+| `client_id`     | string | ✅        | Your application's Client ID. (Required if not using Basic Auth header)           |
+| `client_secret` | string | ✅        | Your application's Client Secret. (Required if not using Basic Auth header)       |
+| `code_verifier` | string | ❌        | PKCE: The original `code_verifier` if `code_challenge` was used. (Public clients) |
+
+**Example Token Exchange (Node.js - Server-Side):**
+
+```javascript  theme={null}
+const fetch = require('node-fetch'); // Or your preferred HTTP client
+
+const CLIENT_ID = "your_client_id";
+const CLIENT_SECRET = "your_client_secret"; // Keep this secure on the server!
+const REDIRECT_URI = "https://yourapp.com/callback";
+const authorizationCode = "code_from_step_3";
+
+async function exchangeCodeForTokens(code) {
+  const params = new URLSearchParams();
+  params.append('grant_type', 'authorization_code');
+  params.append('code', code);
+  params.append('redirect_uri', REDIRECT_URI);
+  params.append('client_id', CLIENT_ID);
+  params.append('client_secret', CLIENT_SECRET);
+  // If using PKCE, also append:
+  // params.append('code_verifier', stored_code_verifier);
+
+  try {
+    const response = await fetch('https://accounts.mubarokah.com/oauth/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        // Alternative to sending client_id/secret in body:
+        // 'Authorization': 'Basic ' + Buffer.from(CLIENT_ID + ':' + CLIENT_SECRET).toString('base64')
+      },
+      body: params
+    });
+
+    const tokenData = await response.json();
+
+    if (!response.ok) {
+      throw new Error(tokenData.error_description || tokenData.error || 'Token exchange failed');
+    }
+
+    // Successfully received tokens:
+    // tokenData.access_token
+    // tokenData.refresh_token
+    // tokenData.expires_in (lifetime of access token in seconds)
+    // tokenData.token_type (usually "Bearer")
+    // tokenData.scope (granted scopes)
+    console.log(tokenData);
+    return tokenData;
+  } catch (error) {
+    console.error('Token Exchange Error:', error.message);
+    // Handle error appropriately
+    throw error;
+  }
+}
+
+// exchangeCodeForTokens(authorizationCode);
+```
+
+**Successful Token Response (JSON):**
+
+```json  theme={null}
+{
+  "token_type": "Bearer",
+  "expires_in": 86400, // e.g., 24 hours
+  "access_token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJSUzI1NiJ9...",
+  "refresh_token": "def502003e1b8f3c5f8b1a2d9e7f6c8d4e9b2a1c...",
+  "scope": "view-user detail-user" // Granted scopes
+}
+```
+
+Store the `access_token` and `refresh_token` securely, associating them with the user. The `access_token` is used to make API requests on behalf of the user.
+
+## Refresh Token Flow
+
+Access tokens are short-lived for security reasons. When an access token expires, your application can use a refresh token to obtain a new access token without requiring the user to go through the authorization flow again.
+
+```http  theme={null}
+POST /oauth/token HTTP/1.1
+Host: accounts.mubarokah.com
+Content-Type: application/x-www-form-urlencoded
+```
+
+**`Request Body Parameters (application/x-www-form-urlencoded):`**
+
+| Parameter       | Type   | Required | Description                                                                                 |
+| --------------- | ------ | -------- | ------------------------------------------------------------------------------------------- |
+| `grant_type`    | string | ✅        | Must be `refresh_token`.                                                                    |
+| `refresh_token` | string | ✅        | The refresh token issued during the token exchange.                                         |
+| `client_id`     | string | ✅        | Your application's Client ID.                                                               |
+| `client_secret` | string | ✅        | Your application's Client Secret.                                                           |
+| `scope`         | string | ❌        | Optional. Request a subset of the original scopes. If omitted, original scopes are granted. |
+
+**Example Refresh Token Request (Node.js - Server-Side):**
+
+```javascript  theme={null}
+const fetch = require('node-fetch');
+
+const CLIENT_ID = "your_client_id";
+const CLIENT_SECRET = "your_client_secret";
+const existingRefreshToken = "user_refresh_token_here";
+
+async function refreshAccessToken(refreshToken) {
+  const params = new URLSearchParams();
+  params.append('grant_type', 'refresh_token');
+  params.append('refresh_token', refreshToken);
+  params.append('client_id', CLIENT_ID);
+  params.append('client_secret', CLIENT_SECRET);
+  // params.append('scope', 'view-user'); // Optionally narrow scopes
+
+  try {
+    const response = await fetch('https://accounts.mubarokah.com/oauth/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: params
+    });
+
+    const tokenData = await response.json();
+
+    if (!response.ok) {
+      throw new Error(tokenData.error_description || tokenData.error || 'Token refresh failed');
+    }
+
+    // Successfully received new tokens:
+    // tokenData.access_token
+    // tokenData.refresh_token (sometimes a new refresh token is issued)
+    // tokenData.expires_in
+    // tokenData.token_type
+    console.log("New Tokens:", tokenData);
+    // Securely store the new tokens, potentially replacing the old refresh token if a new one is provided.
+    return tokenData;
+  } catch (error) {
+    console.error('Token Refresh Error:', error.message);
+    // If refresh fails (e.g., refresh token revoked or invalid),
+    // the user may need to re-authenticate.
+    throw error;
+  }
+}
+
+// refreshAccessToken(existingRefreshToken);
+```
+
+<Info>
+  Refresh tokens can also expire or be revoked. If the refresh token flow fails, your application should direct the user to re-initiate the Authorization Code Grant flow.
+</Info>
+
+## Client Credentials Grant (Machine-to-Machine)
+
+For server-to-server communication where no user is directly involved, the Client Credentials Grant can be used. This flow allows your application to obtain an access token to access its own resources or act on its own behalf.
+
+```http  theme={null}
+POST /oauth/token HTTP/1.1
+Host: accounts.mubarokah.com
+Content-Type: application/x-www-form-urlencoded
+```
+
+**`Request Body Parameters (application/x-www-form-urlencoded):`**
+
+| Parameter       | Type   | Required | Description                                                             |
+| --------------- | ------ | -------- | ----------------------------------------------------------------------- |
+| `grant_type`    | string | ✅        | Must be `client_credentials`.                                           |
+| `client_id`     | string | ✅        | Your application's Client ID.                                           |
+| `client_secret` | string | ✅        | Your application's Client Secret.                                       |
+| `scope`         | string | ❌        | Optional. Space-separated list of scopes relevant to client operations. |
+
+**Example Client Credentials Request (Node.js - Server-Side):**
+
+```javascript  theme={null}
+const fetch = require('node-fetch');
+
+const CLIENT_ID = "your_client_id";
+const CLIENT_SECRET = "your_client_secret";
+
+async function getAppToken() {
+  const params = new URLSearchParams();
+  params.append('grant_type', 'client_credentials');
+  params.append('client_id', CLIENT_ID);
+  params.append('client_secret', CLIENT_SECRET);
+  // params.append('scope', 'some-client-specific-scope'); // Optional
+
+  try {
+    const response = await fetch('https://accounts.mubarokah.com/oauth/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: params
+    });
+
+    const tokenData = await response.json();
+
+    if (!response.ok) {
+      throw new Error(tokenData.error_description || tokenData.error || 'Client credentials grant failed');
+    }
+
+    // Successfully received app access token:
+    // tokenData.access_token
+    // tokenData.expires_in
+    // tokenData.token_type
+    // tokenData.scope
+    console.log("App Access Token:", tokenData.access_token);
+    return tokenData;
+  } catch (error) {
+    console.error('Client Credentials Error:', error.message);
+    throw error;
+  }
+}
+
+// getAppToken();
+```
+
+This flow typically does not return a refresh token. When the access token expires, your application must request a new one using the same Client Credentials Grant.
+
+
+
+# Authorization Endpoint
+
+> API reference for the Mubarokah ID OAuth 2.0 Authorization Endpoint (/oauth/authorize).
+
+# Authorization Endpoint
+
+This endpoint initiates the OAuth 2.0 authorization process. Your application redirects the user's browser to this endpoint to request their consent for accessing their Mubarokah ID data.
+
+## Parameters
+
+<ParamField path="query response_type" type="string" required="true">
+  **`Must be code`**. Indicates that your application is requesting an authorization code.
+</ParamField>
+
+<ParamField path="query client_id" type="string" required="true">
+  Your application's unique Client ID, obtained during registration.
+</ParamField>
+
+<ParamField path="query redirect_uri" type="string" required="true">
+  The URL where Mubarokah ID will redirect the user after they authorize (or deny) your application. This URL must exactly match one of the redirect URIs registered for your application.
+</ParamField>
+
+<ParamField path="query scope" type="string">
+  A space-separated list of [scopes](../../core-concepts/scopes-and-permissions) your application is requesting (e.g., `view-user detail-user`). If not provided, a default set of scopes may be assumed or result in an error, depending on server configuration.
+</ParamField>
+
+<ParamField path="query state" type="string">
+  An opaque value used by your application to maintain state between the request and callback. It's also used to prevent Cross-Site Request Forgery (CSRF) attacks. This value will be returned to your application as part of the redirect URI. **Highly Recommended.**
+</ParamField>
+
+<ParamField path="query prompt" type="string">
+  Optional. Valid values include: \\
+
+  * `consent`: Forces the consent screen to be shown even if the user has previously authorized your application for the requested scopes. \\
+  * `login`: Forces the user to re-authenticate even if they have an active session.
+</ParamField>
+
+<ParamField path="query code_challenge" type="string">
+  Used for [PKCE (Proof Key for Code Exchange)](../../guides/oauth-flow#pkce-proof-key-for-code-exchange). The Base64 URL-encoded SHA256 hash of the `code_verifier`. Required for public clients (e.g., mobile apps, SPAs) that cannot securely store a client secret.
+</ParamField>
+
+<ParamField path="query code_challenge_method" type="string">
+  Used for PKCE. Specifies the method used to derive the `code_challenge`. **`Must be S256`** if `code_challenge` is provided.
+</ParamField>
+
+## Example Request URL Construction
+
+Here's how you might construct the authorization URL in JavaScript:
+
+```javascript  theme={null}
+function generateSecureRandom(length) {
+  // Implement a cryptographically secure random string generator
+  // For example, using window.crypto for browsers
+  const array = new Uint32Array(Math.ceil(length / 4));
+  window.crypto.getRandomValues(array);
+  let result = '';
+  for (let i = 0; i < array.length; i++) {
+    result += array[i].toString(16).padStart(8, '0');
+  }
+  return result.slice(0, length);
+}
+
+const clientId = "your_app_client_id";
+const redirectUri = "https://yourapp.com/oauth/callback";
+const scopes = ['view-user', 'detail-user']; // Or just 'view-user'
+
+// Generate and store state for CSRF protection
+const state = generateSecureRandom(32);
+sessionStorage.setItem('oauth_request_state', state); // Store in session to verify on callback
+
+// For PKCE (if applicable, typically for public clients)
+// const codeVerifier = generateSecureRandom(64);
+// sessionStorage.setItem('oauth_code_verifier', codeVerifier);
+// const encoder = new TextEncoder();
+// const data = encoder.encode(codeVerifier);
+// const digest = await window.crypto.subtle.digest('SHA-256', data);
+// const codeChallenge = btoa(String.fromCharCode(...new Uint8Array(digest)))
+//   .replace(/\+/g, '-')
+//   .replace(/\//g, '_')
+//   .replace(/=+$/, '');
+
+const params = new URLSearchParams({
+  response_type: 'code',
+  client_id: clientId,
+  redirect_uri: redirectUri,
+  scope: scopes.join(' '),
+  state: state,
+  // prompt: 'consent', // Uncomment to force consent screen
+  // code_challenge: codeChallenge, // Uncomment for PKCE
+  // code_challenge_method: 'S256' // Uncomment for PKCE
+});
+
+const authorizationUrl = \`https://accounts.mubarokah.com/oauth/authorize?\${params.toString()}\`;
+
+// Redirect the user's browser to this URL
+// window.location.href = authorizationUrl;
+
+console.log("Constructed Authorization URL:", authorizationUrl);
+```
+
+<Info>
+  Remember to replace placeholder values like `your_app_client_id` and `https://yourapp.com/oauth/callback` with your actual application details. The `state` parameter is crucial for security. Generate a unique, unguessable value for each authorization request and validate it upon callback.
+</Info>
+
+## Responses
+
+Upon successful user authentication and authorization, Mubarokah ID redirects the user's browser to your specified `redirect_uri` with an `authorization_code` and the `state` parameter.
+
+**Example Success Redirect:**
+
+```text  theme={null}
+https://yourapp.com/callback?code=SPLITED_AUTHORIZATION_CODE&state=YOUR_OPAQUE_CSRF_TOKEN
+```
+
+If the user denies authorization or an error occurs, the redirect will include an `error` parameter.
+
+**Example Error Redirect:**
+
+```text  theme={null}
+https://yourapp.com/callback?error=access_denied&error_description=The+user+denied+access+to+your+application.&state=YOUR_OPAQUE_CSRF_TOKEN
+```
+
+Refer to the [Error Codes section](../error-codes) for a list of possible OAuth errors.
+
+
+---
+
+# Token Endpoint
+
+> API reference for Mubarokah ID OAuth 2.0 Token Endpoint (/oauth/token). Used to exchange authorization codes or refresh tokens for access tokens.
+
+# Token Endpoint
+
+The Token Endpoint is used to obtain access tokens (and optionally refresh tokens) by providing an authorization grant. Mubarokah ID supports several grant types on this endpoint: `authorization_code`, `refresh_token`, and `client_credentials`.
+
+**Important requirements:**
+
+* All requests to the token endpoint **`MUST use the POST method`**
+* Request body **`MUST use application/x-www-form-urlencoded`**
+* Endpoint: `https://accounts.mubarokah.com/oauth/token`
+
+## Request Parameters
+
+<ParamField body="grant_type" type="string" required placeholder="authorization_code">
+  Grant type to be used. Available options: `authorization_code`, `refresh_token`, or `client_credentials`
+</ParamField>
+
+<ParamField body="code" type="string" placeholder="def5020052a4b237f572e55dd3ff5428...">
+  Authorization code received from the `/oauth/authorize` redirect (only for grant\_type: authorization\_code)
+</ParamField>
+
+<ParamField body="refresh_token" type="string" placeholder="def502007283433111c7d0723e7683fd...">
+  Valid refresh token (only for grant\_type: refresh\_token)
+</ParamField>
+
+<ParamField body="redirect_uri" type="string" placeholder="http://127.0.0.1:3090/sso/auth/callback">
+  Redirect URI that matches the one used in the initial authorization request (for authorization\_code grant)
+</ParamField>
+
+<ParamField body="client_id" type="string" required placeholder="0a9f8dd9-9f13-4138-abf7-566f30886cf1">
+  Your application's Client ID
+</ParamField>
+
+<ParamField body="client_secret" type="string" required placeholder="ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu">
+  Your application's Client Secret
+</ParamField>
+
+<ParamField body="scope" type="string" placeholder="view-user detail-user">
+  Requested scope (optional for some grant types)
+</ParamField>
+
+<ParamField body="code_verifier" type="string" placeholder>
+  Code verifier for PKCE (optional, if using PKCE)
+</ParamField>
+
+## Response
+
+<ResponseField name="access_token" type="string" required>
+  Access token that can be used to access protected resources
+</ResponseField>
+
+<ResponseField name="token_type" type="string" required>
+  Usually `Bearer`. How to use the token in API requests
+</ResponseField>
+
+<ResponseField name="expires_in" type="number" required>
+  Access token lifetime in seconds (e.g., `86400` for 24 hours)
+</ResponseField>
+
+<ResponseField name="refresh_token" type="string">
+  Token for obtaining new access tokens when expired
+</ResponseField>
+
+<ResponseField name="scope" type="string">
+  Granted scope (if different from requested)
+</ResponseField>
+
+## How to Fill API Playground
+
+Based on your successful Laravel OAuth flow, here's how to fill the fields in "Try It":
+
+### **Option 1: Refresh Token Grant (RECOMMENDED)** ✅
+
+**Fields to fill:**
+
+* `grant_type`: `refresh_token`
+* `refresh_token`: `def502007283433111c7d0723e7683fd204977ccb0f679666ccd96fbf9385cda625bfe318102cf78245d44c8cb85818bc30b29ba74c25ccf1e8c85c5acbefcea8ee25c7b0d3f86e56e979c4a684c7d3276393c154577276e724c5f8f7f2aae592827f455e689d3a422fa85ea74af66e6c5f6a71d9ef8fcd5d0ebe3615cb7efdaa1771e3512c7db0562d63ac9e1cd28d1ce1c7148d667efaaaef9d49774a913f88438a7d57681119cb01eff80b3ad90c003ecd751852ee447ef232ada4789d684f802eeaa29ec35d06b7dfb3b4993171550e3625ff2f56b9157d5b565845f99575e70abd8c9b6d4ddf9e85fdd909b1cda38278147a021e6e2e6e18f9fcb053cb116e62fb5a4a2db50d3640da8d1848e6ea8fae43d334dac942bb374ecb84e89d4b793f77208c9a56c1a3ec76352e14d93cb888482cc91984747dd5f988bc2c416b23f3ebc3495ec919f540968807fff982e1066eedfca74ec0edc423bb13b36ecde2d73f87e8fa83f4bc3f3da36eb210c4a4bf30731774eac51807ae0b4cbf3fa4864254898427ce35b07b281505555668a6c364b2a9cbdeb02f2f0186c`
+* `client_id`: `0a9f8dd9-9f13-4138-abf7-566f30886cf1`
+* `client_secret`: `ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu`
+
+**Fields to leave empty:**
+
+* `code` (leave empty)
+* `redirect_uri` (leave empty)
+* `scope` (optional)
+* `code_verifier` (leave empty)
+
+### **Option 2: Client Credentials Grant**
+
+**Fields to fill:**
+
+* `grant_type`: `client_credentials`
+* `client_id`: `0a9f8dd9-9f13-4138-abf7-566f30886cf1`
+* `client_secret`: `ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu`
+* `scope`: `server-operations` (optional)
+
+**Fields to leave empty:**
+
+* `code` (leave empty)
+* `refresh_token` (leave empty)
+* `redirect_uri` (leave empty)
+* `code_verifier` (leave empty)
+
+### **⚠️ Authorization Code Grant (Not Recommended for Testing)**
+
+The authorization code from your logs has already been used and will result in an `invalid_grant` error. For testing this, you need to perform a new OAuth flow:
+
+* `grant_type`: `authorization_code`
+* `code`: `[NEW_AUTHORIZATION_CODE]`
+* `redirect_uri`: `http://127.0.0.1:3090/sso/auth/callback`
+* `client_id`: `0a9f8dd9-9f13-4138-abf7-566f30886cf1`
+* `client_secret`: `ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu`
+
+## Supported Grant Types
+
+### 1. Authorization Code Grant (Most Common)
+
+Used after user authorizes your application. Exchanges authorization code for access token.
+
+**Example Request:**
+
+```javascript  theme={null}
+const response = await fetch('https://accounts.mubarokah.com/oauth/token', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/x-www-form-urlencoded'
+  },
+  body: new URLSearchParams({
+    grant_type: 'authorization_code',
+    code: 'authorization_code_from_callback',
+    redirect_uri: 'http://127.0.0.1:3090/sso/auth/callback',
+    client_id: '0a9f8dd9-9f13-4138-abf7-566f30886cf1',
+    client_secret: 'ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu'
+  })
+});
+
+const tokenData = await response.json();
+console.log('Access token:', tokenData.access_token);
+```
+
+### 2. Refresh Token Grant
+
+Used to obtain new access tokens when current token expires.
+
+**Example Request:**
+
+```javascript  theme={null}
+const response = await fetch('https://accounts.mubarokah.com/oauth/token', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/x-www-form-urlencoded'
+  },
+  body: new URLSearchParams({
+    grant_type: 'refresh_token',
+    refresh_token: 'def502007283433111c7d0723e7683fd204977ccb0f679666ccd96fbf9385cda625bfe318102cf78245d44c8cb85818bc30b29ba74c25ccf1e8c85c5acbefcea8ee25c7b0d3f86e56e979c4a684c7d3276393c154577276e724c5f8f7f2aae592827f455e689d3a422fa85ea74af66e6c5f6a71d9ef8fcd5d0ebe3615cb7efdaa1771e3512c7db0562d63ac9e1cd28d1ce1c7148d667efaaaef9d49774a913f88438a7d57681119cb01eff80b3ad90c003ecd751852ee447ef232ada4789d684f802eeaa29ec35d06b7dfb3b4993171550e3625ff2f56b9157d5b565845f99575e70abd8c9b6d4ddf9e85fdd909b1cda38278147a021e6e2e6e18f9fcb053cb116e62fb5a4a2db50d3640da8d1848e6ea8fae43d334dac942bb374ecb84e89d4b793f77208c9a56c1a3ec76352e14d93cb888482cc91984747dd5f988bc2c416b23f3ebc3495ec919f540968807fff982e1066eedfca74ec0edc423bb13b36ecde2d73f87e8fa83f4bc3f3da36eb210c4a4bf30731774eac51807ae0b4cbf3fa4864254898427ce35b07b281505555668a6c364b2a9cbdeb02f2f0186c',
+    client_id: '0a9f8dd9-9f13-4138-abf7-566f30886cf1',
+    client_secret: 'ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu'
+  })
+});
+
+const newTokens = await response.json();
+```
+
+### 3. Client Credentials Grant
+
+For machine-to-machine (M2M) authentication, without user involvement.
+
+**Example Request:**
+
+```javascript  theme={null}
+const response = await fetch('https://accounts.mubarokah.com/oauth/token', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/x-www-form-urlencoded'
+  },
+  body: new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_id: '0a9f8dd9-9f13-4138-abf7-566f30886cf1',
+    client_secret: 'ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu',
+    scope: 'server-operations' // optional
+  })
+});
+
+const appToken = await response.json();
+```
+
+## Example Success Response
+
+```json  theme={null}
+{
+  "token_type": "Bearer",
+  "expires_in": 86400,
+  "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refresh_token": "def5020023761949f076f069874c92d8...",
+  "scope": "view-user detail-user"
+}
+```
+
+## Error Response
+
+If the request fails, it will return a JSON error response:
+
+```json  theme={null}
+{
+  "error": "invalid_grant",
+  "error_description": "The provided authorization grant is invalid, expired, revoked, does not match the redirection URI used in the authorization request, or was issued to another client.",
+  "message": "The provided authorization grant is invalid or expired.",
+  "hint": "Check the authorization code and try again."
+}
+```
+
+## Common Error Codes
+
+| Error Code               | Description                               | Solution                                                            |
+| ------------------------ | ----------------------------------------- | ------------------------------------------------------------------- |
+| `invalid_request`        | Missing or malformed parameters           | Check all required parameters                                       |
+| `invalid_client`         | Client authentication failed              | Verify `client_id` and `client_secret`                              |
+| `invalid_grant`          | Authorization grant invalid/expired       | Obtain new authorization code                                       |
+| `unauthorized_client`    | Client not authorized for this grant type | Check client configuration                                          |
+| `unsupported_grant_type` | Grant type not supported                  | Use: `authorization_code`, `refresh_token`, or `client_credentials` |
+| `invalid_scope`          | Requested scope is invalid                | Check available scopes                                              |
+
+## Security Best Practices
+
+<Warning>
+  **`Never expose client_secret in client-side code!`** `client_secret` must be stored securely on your server.
+</Warning>
+
+1. **Store credentials securely using environment variables**
+2. **Use HTTPS for all OAuth communications**
+3. **Implement proper error handling**
+4. **Validate state parameter for CSRF protection**
+5. **Rotate credentials regularly**
+6. **Monitor token usage for suspicious activity**
+7. **Implement token refresh logic**
+8. **Use PKCE for public clients**
+
+
+---
+
+# Token Endpoint
+
+> API reference for Mubarokah ID OAuth 2.0 Token Endpoint (/oauth/token). Used to exchange authorization codes or refresh tokens for access tokens.
+
+# Token Endpoint
+
+The Token Endpoint is used to obtain access tokens (and optionally refresh tokens) by providing an authorization grant. Mubarokah ID supports several grant types on this endpoint: `authorization_code`, `refresh_token`, and `client_credentials`.
+
+**Important requirements:**
+
+* All requests to the token endpoint **`MUST use the POST method`**
+* Request body **`MUST use application/x-www-form-urlencoded`**
+* Endpoint: `https://accounts.mubarokah.com/oauth/token`
+
+## Request Parameters
+
+<ParamField body="grant_type" type="string" required placeholder="authorization_code">
+  Grant type to be used. Available options: `authorization_code`, `refresh_token`, or `client_credentials`
+</ParamField>
+
+<ParamField body="code" type="string" placeholder="def5020052a4b237f572e55dd3ff5428...">
+  Authorization code received from the `/oauth/authorize` redirect (only for grant\_type: authorization\_code)
+</ParamField>
+
+<ParamField body="refresh_token" type="string" placeholder="def502007283433111c7d0723e7683fd...">
+  Valid refresh token (only for grant\_type: refresh\_token)
+</ParamField>
+
+<ParamField body="redirect_uri" type="string" placeholder="http://127.0.0.1:3090/sso/auth/callback">
+  Redirect URI that matches the one used in the initial authorization request (for authorization\_code grant)
+</ParamField>
+
+<ParamField body="client_id" type="string" required placeholder="0a9f8dd9-9f13-4138-abf7-566f30886cf1">
+  Your application's Client ID
+</ParamField>
+
+<ParamField body="client_secret" type="string" required placeholder="ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu">
+  Your application's Client Secret
+</ParamField>
+
+<ParamField body="scope" type="string" placeholder="view-user detail-user">
+  Requested scope (optional for some grant types)
+</ParamField>
+
+<ParamField body="code_verifier" type="string" placeholder>
+  Code verifier for PKCE (optional, if using PKCE)
+</ParamField>
+
+## Response
+
+<ResponseField name="access_token" type="string" required>
+  Access token that can be used to access protected resources
+</ResponseField>
+
+<ResponseField name="token_type" type="string" required>
+  Usually `Bearer`. How to use the token in API requests
+</ResponseField>
+
+<ResponseField name="expires_in" type="number" required>
+  Access token lifetime in seconds (e.g., `86400` for 24 hours)
+</ResponseField>
+
+<ResponseField name="refresh_token" type="string">
+  Token for obtaining new access tokens when expired
+</ResponseField>
+
+<ResponseField name="scope" type="string">
+  Granted scope (if different from requested)
+</ResponseField>
+
+## How to Fill API Playground
+
+Based on your successful Laravel OAuth flow, here's how to fill the fields in "Try It":
+
+### **Option 1: Refresh Token Grant (RECOMMENDED)** ✅
+
+**Fields to fill:**
+
+* `grant_type`: `refresh_token`
+* `refresh_token`: `def502007283433111c7d0723e7683fd204977ccb0f679666ccd96fbf9385cda625bfe318102cf78245d44c8cb85818bc30b29ba74c25ccf1e8c85c5acbefcea8ee25c7b0d3f86e56e979c4a684c7d3276393c154577276e724c5f8f7f2aae592827f455e689d3a422fa85ea74af66e6c5f6a71d9ef8fcd5d0ebe3615cb7efdaa1771e3512c7db0562d63ac9e1cd28d1ce1c7148d667efaaaef9d49774a913f88438a7d57681119cb01eff80b3ad90c003ecd751852ee447ef232ada4789d684f802eeaa29ec35d06b7dfb3b4993171550e3625ff2f56b9157d5b565845f99575e70abd8c9b6d4ddf9e85fdd909b1cda38278147a021e6e2e6e18f9fcb053cb116e62fb5a4a2db50d3640da8d1848e6ea8fae43d334dac942bb374ecb84e89d4b793f77208c9a56c1a3ec76352e14d93cb888482cc91984747dd5f988bc2c416b23f3ebc3495ec919f540968807fff982e1066eedfca74ec0edc423bb13b36ecde2d73f87e8fa83f4bc3f3da36eb210c4a4bf30731774eac51807ae0b4cbf3fa4864254898427ce35b07b281505555668a6c364b2a9cbdeb02f2f0186c`
+* `client_id`: `0a9f8dd9-9f13-4138-abf7-566f30886cf1`
+* `client_secret`: `ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu`
+
+**Fields to leave empty:**
+
+* `code` (leave empty)
+* `redirect_uri` (leave empty)
+* `scope` (optional)
+* `code_verifier` (leave empty)
+
+### **Option 2: Client Credentials Grant**
+
+**Fields to fill:**
+
+* `grant_type`: `client_credentials`
+* `client_id`: `0a9f8dd9-9f13-4138-abf7-566f30886cf1`
+* `client_secret`: `ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu`
+* `scope`: `server-operations` (optional)
+
+**Fields to leave empty:**
+
+* `code` (leave empty)
+* `refresh_token` (leave empty)
+* `redirect_uri` (leave empty)
+* `code_verifier` (leave empty)
+
+### **⚠️ Authorization Code Grant (Not Recommended for Testing)**
+
+The authorization code from your logs has already been used and will result in an `invalid_grant` error. For testing this, you need to perform a new OAuth flow:
+
+* `grant_type`: `authorization_code`
+* `code`: `[NEW_AUTHORIZATION_CODE]`
+* `redirect_uri`: `http://127.0.0.1:3090/sso/auth/callback`
+* `client_id`: `0a9f8dd9-9f13-4138-abf7-566f30886cf1`
+* `client_secret`: `ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu`
+
+## Supported Grant Types
+
+### 1. Authorization Code Grant (Most Common)
+
+Used after user authorizes your application. Exchanges authorization code for access token.
+
+**Example Request:**
+
+```javascript  theme={null}
+const response = await fetch('https://accounts.mubarokah.com/oauth/token', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/x-www-form-urlencoded'
+  },
+  body: new URLSearchParams({
+    grant_type: 'authorization_code',
+    code: 'authorization_code_from_callback',
+    redirect_uri: 'http://127.0.0.1:3090/sso/auth/callback',
+    client_id: '0a9f8dd9-9f13-4138-abf7-566f30886cf1',
+    client_secret: 'ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu'
+  })
+});
+
+const tokenData = await response.json();
+console.log('Access token:', tokenData.access_token);
+```
+
+### 2. Refresh Token Grant
+
+Used to obtain new access tokens when current token expires.
+
+**Example Request:**
+
+```javascript  theme={null}
+const response = await fetch('https://accounts.mubarokah.com/oauth/token', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/x-www-form-urlencoded'
+  },
+  body: new URLSearchParams({
+    grant_type: 'refresh_token',
+    refresh_token: 'def502007283433111c7d0723e7683fd204977ccb0f679666ccd96fbf9385cda625bfe318102cf78245d44c8cb85818bc30b29ba74c25ccf1e8c85c5acbefcea8ee25c7b0d3f86e56e979c4a684c7d3276393c154577276e724c5f8f7f2aae592827f455e689d3a422fa85ea74af66e6c5f6a71d9ef8fcd5d0ebe3615cb7efdaa1771e3512c7db0562d63ac9e1cd28d1ce1c7148d667efaaaef9d49774a913f88438a7d57681119cb01eff80b3ad90c003ecd751852ee447ef232ada4789d684f802eeaa29ec35d06b7dfb3b4993171550e3625ff2f56b9157d5b565845f99575e70abd8c9b6d4ddf9e85fdd909b1cda38278147a021e6e2e6e18f9fcb053cb116e62fb5a4a2db50d3640da8d1848e6ea8fae43d334dac942bb374ecb84e89d4b793f77208c9a56c1a3ec76352e14d93cb888482cc91984747dd5f988bc2c416b23f3ebc3495ec919f540968807fff982e1066eedfca74ec0edc423bb13b36ecde2d73f87e8fa83f4bc3f3da36eb210c4a4bf30731774eac51807ae0b4cbf3fa4864254898427ce35b07b281505555668a6c364b2a9cbdeb02f2f0186c',
+    client_id: '0a9f8dd9-9f13-4138-abf7-566f30886cf1',
+    client_secret: 'ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu'
+  })
+});
+
+const newTokens = await response.json();
+```
+
+### 3. Client Credentials Grant
+
+For machine-to-machine (M2M) authentication, without user involvement.
+
+**Example Request:**
+
+```javascript  theme={null}
+const response = await fetch('https://accounts.mubarokah.com/oauth/token', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/x-www-form-urlencoded'
+  },
+  body: new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_id: '0a9f8dd9-9f13-4138-abf7-566f30886cf1',
+    client_secret: 'ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu',
+    scope: 'server-operations' // optional
+  })
+});
+
+const appToken = await response.json();
+```
+
+## Example Success Response
+
+```json  theme={null}
+{
+  "token_type": "Bearer",
+  "expires_in": 86400,
+  "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refresh_token": "def5020023761949f076f069874c92d8...",
+  "scope": "view-user detail-user"
+}
+```
+
+## Error Response
+
+If the request fails, it will return a JSON error response:
+
+```json  theme={null}
+{
+  "error": "invalid_grant",
+  "error_description": "The provided authorization grant is invalid, expired, revoked, does not match the redirection URI used in the authorization request, or was issued to another client.",
+  "message": "The provided authorization grant is invalid or expired.",
+  "hint": "Check the authorization code and try again."
+}
+```
+
+## Common Error Codes
+
+| Error Code               | Description                               | Solution                                                            |
+| ------------------------ | ----------------------------------------- | ------------------------------------------------------------------- |
+| `invalid_request`        | Missing or malformed parameters           | Check all required parameters                                       |
+| `invalid_client`         | Client authentication failed              | Verify `client_id` and `client_secret`                              |
+| `invalid_grant`          | Authorization grant invalid/expired       | Obtain new authorization code                                       |
+| `unauthorized_client`    | Client not authorized for this grant type | Check client configuration                                          |
+| `unsupported_grant_type` | Grant type not supported                  | Use: `authorization_code`, `refresh_token`, or `client_credentials` |
+| `invalid_scope`          | Requested scope is invalid                | Check available scopes                                              |
+
+## Security Best Practices
+
+<Warning>
+  **`Never expose client_secret in client-side code!`** `client_secret` must be stored securely on your server.
+</Warning>
+
+1. **Store credentials securely using environment variables**
+2. **Use HTTPS for all OAuth communications**
+3. **Implement proper error handling**
+4. **Validate state parameter for CSRF protection**
+5. **Rotate credentials regularly**
+6. **Monitor token usage for suspicious activity**
+7. **Implement token refresh logic**
+8. **Use PKCE for public clients**
+
+
+---
+
+# Token Endpoint
+
+> API reference for Mubarokah ID OAuth 2.0 Token Endpoint (/oauth/token). Used to exchange authorization codes or refresh tokens for access tokens.
+
+# Token Endpoint
+
+The Token Endpoint is used to obtain access tokens (and optionally refresh tokens) by providing an authorization grant. Mubarokah ID supports several grant types on this endpoint: `authorization_code`, `refresh_token`, and `client_credentials`.
+
+**Important requirements:**
+
+* All requests to the token endpoint **`MUST use the POST method`**
+* Request body **`MUST use application/x-www-form-urlencoded`**
+* Endpoint: `https://accounts.mubarokah.com/oauth/token`
+
+## Request Parameters
+
+<ParamField body="grant_type" type="string" required placeholder="authorization_code">
+  Grant type to be used. Available options: `authorization_code`, `refresh_token`, or `client_credentials`
+</ParamField>
+
+<ParamField body="code" type="string" placeholder="def5020052a4b237f572e55dd3ff5428...">
+  Authorization code received from the `/oauth/authorize` redirect (only for grant\_type: authorization\_code)
+</ParamField>
+
+<ParamField body="refresh_token" type="string" placeholder="def502007283433111c7d0723e7683fd...">
+  Valid refresh token (only for grant\_type: refresh\_token)
+</ParamField>
+
+<ParamField body="redirect_uri" type="string" placeholder="http://127.0.0.1:3090/sso/auth/callback">
+  Redirect URI that matches the one used in the initial authorization request (for authorization\_code grant)
+</ParamField>
+
+<ParamField body="client_id" type="string" required placeholder="0a9f8dd9-9f13-4138-abf7-566f30886cf1">
+  Your application's Client ID
+</ParamField>
+
+<ParamField body="client_secret" type="string" required placeholder="ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu">
+  Your application's Client Secret
+</ParamField>
+
+<ParamField body="scope" type="string" placeholder="view-user detail-user">
+  Requested scope (optional for some grant types)
+</ParamField>
+
+<ParamField body="code_verifier" type="string" placeholder>
+  Code verifier for PKCE (optional, if using PKCE)
+</ParamField>
+
+## Response
+
+<ResponseField name="access_token" type="string" required>
+  Access token that can be used to access protected resources
+</ResponseField>
+
+<ResponseField name="token_type" type="string" required>
+  Usually `Bearer`. How to use the token in API requests
+</ResponseField>
+
+<ResponseField name="expires_in" type="number" required>
+  Access token lifetime in seconds (e.g., `86400` for 24 hours)
+</ResponseField>
+
+<ResponseField name="refresh_token" type="string">
+  Token for obtaining new access tokens when expired
+</ResponseField>
+
+<ResponseField name="scope" type="string">
+  Granted scope (if different from requested)
+</ResponseField>
+
+## How to Fill API Playground
+
+Based on your successful Laravel OAuth flow, here's how to fill the fields in "Try It":
+
+### **Option 1: Refresh Token Grant (RECOMMENDED)** ✅
+
+**Fields to fill:**
+
+* `grant_type`: `refresh_token`
+* `refresh_token`: `def502007283433111c7d0723e7683fd204977ccb0f679666ccd96fbf9385cda625bfe318102cf78245d44c8cb85818bc30b29ba74c25ccf1e8c85c5acbefcea8ee25c7b0d3f86e56e979c4a684c7d3276393c154577276e724c5f8f7f2aae592827f455e689d3a422fa85ea74af66e6c5f6a71d9ef8fcd5d0ebe3615cb7efdaa1771e3512c7db0562d63ac9e1cd28d1ce1c7148d667efaaaef9d49774a913f88438a7d57681119cb01eff80b3ad90c003ecd751852ee447ef232ada4789d684f802eeaa29ec35d06b7dfb3b4993171550e3625ff2f56b9157d5b565845f99575e70abd8c9b6d4ddf9e85fdd909b1cda38278147a021e6e2e6e18f9fcb053cb116e62fb5a4a2db50d3640da8d1848e6ea8fae43d334dac942bb374ecb84e89d4b793f77208c9a56c1a3ec76352e14d93cb888482cc91984747dd5f988bc2c416b23f3ebc3495ec919f540968807fff982e1066eedfca74ec0edc423bb13b36ecde2d73f87e8fa83f4bc3f3da36eb210c4a4bf30731774eac51807ae0b4cbf3fa4864254898427ce35b07b281505555668a6c364b2a9cbdeb02f2f0186c`
+* `client_id`: `0a9f8dd9-9f13-4138-abf7-566f30886cf1`
+* `client_secret`: `ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu`
+
+**Fields to leave empty:**
+
+* `code` (leave empty)
+* `redirect_uri` (leave empty)
+* `scope` (optional)
+* `code_verifier` (leave empty)
+
+### **Option 2: Client Credentials Grant**
+
+**Fields to fill:**
+
+* `grant_type`: `client_credentials`
+* `client_id`: `0a9f8dd9-9f13-4138-abf7-566f30886cf1`
+* `client_secret`: `ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu`
+* `scope`: `server-operations` (optional)
+
+**Fields to leave empty:**
+
+* `code` (leave empty)
+* `refresh_token` (leave empty)
+* `redirect_uri` (leave empty)
+* `code_verifier` (leave empty)
+
+### **⚠️ Authorization Code Grant (Not Recommended for Testing)**
+
+The authorization code from your logs has already been used and will result in an `invalid_grant` error. For testing this, you need to perform a new OAuth flow:
+
+* `grant_type`: `authorization_code`
+* `code`: `[NEW_AUTHORIZATION_CODE]`
+* `redirect_uri`: `http://127.0.0.1:3090/sso/auth/callback`
+* `client_id`: `0a9f8dd9-9f13-4138-abf7-566f30886cf1`
+* `client_secret`: `ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu`
+
+## Supported Grant Types
+
+### 1. Authorization Code Grant (Most Common)
+
+Used after user authorizes your application. Exchanges authorization code for access token.
+
+**Example Request:**
+
+```javascript  theme={null}
+const response = await fetch('https://accounts.mubarokah.com/oauth/token', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/x-www-form-urlencoded'
+  },
+  body: new URLSearchParams({
+    grant_type: 'authorization_code',
+    code: 'authorization_code_from_callback',
+    redirect_uri: 'http://127.0.0.1:3090/sso/auth/callback',
+    client_id: '0a9f8dd9-9f13-4138-abf7-566f30886cf1',
+    client_secret: 'ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu'
+  })
+});
+
+const tokenData = await response.json();
+console.log('Access token:', tokenData.access_token);
+```
+
+### 2. Refresh Token Grant
+
+Used to obtain new access tokens when current token expires.
+
+**Example Request:**
+
+```javascript  theme={null}
+const response = await fetch('https://accounts.mubarokah.com/oauth/token', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/x-www-form-urlencoded'
+  },
+  body: new URLSearchParams({
+    grant_type: 'refresh_token',
+    refresh_token: 'def502007283433111c7d0723e7683fd204977ccb0f679666ccd96fbf9385cda625bfe318102cf78245d44c8cb85818bc30b29ba74c25ccf1e8c85c5acbefcea8ee25c7b0d3f86e56e979c4a684c7d3276393c154577276e724c5f8f7f2aae592827f455e689d3a422fa85ea74af66e6c5f6a71d9ef8fcd5d0ebe3615cb7efdaa1771e3512c7db0562d63ac9e1cd28d1ce1c7148d667efaaaef9d49774a913f88438a7d57681119cb01eff80b3ad90c003ecd751852ee447ef232ada4789d684f802eeaa29ec35d06b7dfb3b4993171550e3625ff2f56b9157d5b565845f99575e70abd8c9b6d4ddf9e85fdd909b1cda38278147a021e6e2e6e18f9fcb053cb116e62fb5a4a2db50d3640da8d1848e6ea8fae43d334dac942bb374ecb84e89d4b793f77208c9a56c1a3ec76352e14d93cb888482cc91984747dd5f988bc2c416b23f3ebc3495ec919f540968807fff982e1066eedfca74ec0edc423bb13b36ecde2d73f87e8fa83f4bc3f3da36eb210c4a4bf30731774eac51807ae0b4cbf3fa4864254898427ce35b07b281505555668a6c364b2a9cbdeb02f2f0186c',
+    client_id: '0a9f8dd9-9f13-4138-abf7-566f30886cf1',
+    client_secret: 'ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu'
+  })
+});
+
+const newTokens = await response.json();
+```
+
+### 3. Client Credentials Grant
+
+For machine-to-machine (M2M) authentication, without user involvement.
+
+**Example Request:**
+
+```javascript  theme={null}
+const response = await fetch('https://accounts.mubarokah.com/oauth/token', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/x-www-form-urlencoded'
+  },
+  body: new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_id: '0a9f8dd9-9f13-4138-abf7-566f30886cf1',
+    client_secret: 'ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu',
+    scope: 'server-operations' // optional
+  })
+});
+
+const appToken = await response.json();
+```
+
+## Example Success Response
+
+```json  theme={null}
+{
+  "token_type": "Bearer",
+  "expires_in": 86400,
+  "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refresh_token": "def5020023761949f076f069874c92d8...",
+  "scope": "view-user detail-user"
+}
+```
+
+## Error Response
+
+If the request fails, it will return a JSON error response:
+
+```json  theme={null}
+{
+  "error": "invalid_grant",
+  "error_description": "The provided authorization grant is invalid, expired, revoked, does not match the redirection URI used in the authorization request, or was issued to another client.",
+  "message": "The provided authorization grant is invalid or expired.",
+  "hint": "Check the authorization code and try again."
+}
+```
+
+## Common Error Codes
+
+| Error Code               | Description                               | Solution                                                            |
+| ------------------------ | ----------------------------------------- | ------------------------------------------------------------------- |
+| `invalid_request`        | Missing or malformed parameters           | Check all required parameters                                       |
+| `invalid_client`         | Client authentication failed              | Verify `client_id` and `client_secret`                              |
+| `invalid_grant`          | Authorization grant invalid/expired       | Obtain new authorization code                                       |
+| `unauthorized_client`    | Client not authorized for this grant type | Check client configuration                                          |
+| `unsupported_grant_type` | Grant type not supported                  | Use: `authorization_code`, `refresh_token`, or `client_credentials` |
+| `invalid_scope`          | Requested scope is invalid                | Check available scopes                                              |
+
+## Security Best Practices
+
+<Warning>
+  **`Never expose client_secret in client-side code!`** `client_secret` must be stored securely on your server.
+</Warning>
+
+1. **Store credentials securely using environment variables**
+2. **Use HTTPS for all OAuth communications**
+3. **Implement proper error handling**
+4. **Validate state parameter for CSRF protection**
+5. **Rotate credentials regularly**
+6. **Monitor token usage for suspicious activity**
+7. **Implement token refresh logic**
+8. **Use PKCE for public clients**
+
+
+---
+
+# Token Endpoint
+
+> API reference for Mubarokah ID OAuth 2.0 Token Endpoint (/oauth/token). Used to exchange authorization codes or refresh tokens for access tokens.
+
+# Token Endpoint
+
+The Token Endpoint is used to obtain access tokens (and optionally refresh tokens) by providing an authorization grant. Mubarokah ID supports several grant types on this endpoint: `authorization_code`, `refresh_token`, and `client_credentials`.
+
+**Important requirements:**
+
+* All requests to the token endpoint **`MUST use the POST method`**
+* Request body **`MUST use application/x-www-form-urlencoded`**
+* Endpoint: `https://accounts.mubarokah.com/oauth/token`
+
+## Request Parameters
+
+<ParamField body="grant_type" type="string" required placeholder="authorization_code">
+  Grant type to be used. Available options: `authorization_code`, `refresh_token`, or `client_credentials`
+</ParamField>
+
+<ParamField body="code" type="string" placeholder="def5020052a4b237f572e55dd3ff5428...">
+  Authorization code received from the `/oauth/authorize` redirect (only for grant\_type: authorization\_code)
+</ParamField>
+
+<ParamField body="refresh_token" type="string" placeholder="def502007283433111c7d0723e7683fd...">
+  Valid refresh token (only for grant\_type: refresh\_token)
+</ParamField>
+
+<ParamField body="redirect_uri" type="string" placeholder="http://127.0.0.1:3090/sso/auth/callback">
+  Redirect URI that matches the one used in the initial authorization request (for authorization\_code grant)
+</ParamField>
+
+<ParamField body="client_id" type="string" required placeholder="0a9f8dd9-9f13-4138-abf7-566f30886cf1">
+  Your application's Client ID
+</ParamField>
+
+<ParamField body="client_secret" type="string" required placeholder="ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu">
+  Your application's Client Secret
+</ParamField>
+
+<ParamField body="scope" type="string" placeholder="view-user detail-user">
+  Requested scope (optional for some grant types)
+</ParamField>
+
+<ParamField body="code_verifier" type="string" placeholder>
+  Code verifier for PKCE (optional, if using PKCE)
+</ParamField>
+
+## Response
+
+<ResponseField name="access_token" type="string" required>
+  Access token that can be used to access protected resources
+</ResponseField>
+
+<ResponseField name="token_type" type="string" required>
+  Usually `Bearer`. How to use the token in API requests
+</ResponseField>
+
+<ResponseField name="expires_in" type="number" required>
+  Access token lifetime in seconds (e.g., `86400` for 24 hours)
+</ResponseField>
+
+<ResponseField name="refresh_token" type="string">
+  Token for obtaining new access tokens when expired
+</ResponseField>
+
+<ResponseField name="scope" type="string">
+  Granted scope (if different from requested)
+</ResponseField>
+
+## How to Fill API Playground
+
+Based on your successful Laravel OAuth flow, here's how to fill the fields in "Try It":
+
+### **Option 1: Refresh Token Grant (RECOMMENDED)** ✅
+
+**Fields to fill:**
+
+* `grant_type`: `refresh_token`
+* `refresh_token`: `def502007283433111c7d0723e7683fd204977ccb0f679666ccd96fbf9385cda625bfe318102cf78245d44c8cb85818bc30b29ba74c25ccf1e8c85c5acbefcea8ee25c7b0d3f86e56e979c4a684c7d3276393c154577276e724c5f8f7f2aae592827f455e689d3a422fa85ea74af66e6c5f6a71d9ef8fcd5d0ebe3615cb7efdaa1771e3512c7db0562d63ac9e1cd28d1ce1c7148d667efaaaef9d49774a913f88438a7d57681119cb01eff80b3ad90c003ecd751852ee447ef232ada4789d684f802eeaa29ec35d06b7dfb3b4993171550e3625ff2f56b9157d5b565845f99575e70abd8c9b6d4ddf9e85fdd909b1cda38278147a021e6e2e6e18f9fcb053cb116e62fb5a4a2db50d3640da8d1848e6ea8fae43d334dac942bb374ecb84e89d4b793f77208c9a56c1a3ec76352e14d93cb888482cc91984747dd5f988bc2c416b23f3ebc3495ec919f540968807fff982e1066eedfca74ec0edc423bb13b36ecde2d73f87e8fa83f4bc3f3da36eb210c4a4bf30731774eac51807ae0b4cbf3fa4864254898427ce35b07b281505555668a6c364b2a9cbdeb02f2f0186c`
+* `client_id`: `0a9f8dd9-9f13-4138-abf7-566f30886cf1`
+* `client_secret`: `ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu`
+
+**Fields to leave empty:**
+
+* `code` (leave empty)
+* `redirect_uri` (leave empty)
+* `scope` (optional)
+* `code_verifier` (leave empty)
+
+### **Option 2: Client Credentials Grant**
+
+**Fields to fill:**
+
+* `grant_type`: `client_credentials`
+* `client_id`: `0a9f8dd9-9f13-4138-abf7-566f30886cf1`
+* `client_secret`: `ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu`
+* `scope`: `server-operations` (optional)
+
+**Fields to leave empty:**
+
+* `code` (leave empty)
+* `refresh_token` (leave empty)
+* `redirect_uri` (leave empty)
+* `code_verifier` (leave empty)
+
+### **⚠️ Authorization Code Grant (Not Recommended for Testing)**
+
+The authorization code from your logs has already been used and will result in an `invalid_grant` error. For testing this, you need to perform a new OAuth flow:
+
+* `grant_type`: `authorization_code`
+* `code`: `[NEW_AUTHORIZATION_CODE]`
+* `redirect_uri`: `http://127.0.0.1:3090/sso/auth/callback`
+* `client_id`: `0a9f8dd9-9f13-4138-abf7-566f30886cf1`
+* `client_secret`: `ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu`
+
+## Supported Grant Types
+
+### 1. Authorization Code Grant (Most Common)
+
+Used after user authorizes your application. Exchanges authorization code for access token.
+
+**Example Request:**
+
+```javascript  theme={null}
+const response = await fetch('https://accounts.mubarokah.com/oauth/token', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/x-www-form-urlencoded'
+  },
+  body: new URLSearchParams({
+    grant_type: 'authorization_code',
+    code: 'authorization_code_from_callback',
+    redirect_uri: 'http://127.0.0.1:3090/sso/auth/callback',
+    client_id: '0a9f8dd9-9f13-4138-abf7-566f30886cf1',
+    client_secret: 'ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu'
+  })
+});
+
+const tokenData = await response.json();
+console.log('Access token:', tokenData.access_token);
+```
+
+### 2. Refresh Token Grant
+
+Used to obtain new access tokens when current token expires.
+
+**Example Request:**
+
+```javascript  theme={null}
+const response = await fetch('https://accounts.mubarokah.com/oauth/token', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/x-www-form-urlencoded'
+  },
+  body: new URLSearchParams({
+    grant_type: 'refresh_token',
+    refresh_token: 'def502007283433111c7d0723e7683fd204977ccb0f679666ccd96fbf9385cda625bfe318102cf78245d44c8cb85818bc30b29ba74c25ccf1e8c85c5acbefcea8ee25c7b0d3f86e56e979c4a684c7d3276393c154577276e724c5f8f7f2aae592827f455e689d3a422fa85ea74af66e6c5f6a71d9ef8fcd5d0ebe3615cb7efdaa1771e3512c7db0562d63ac9e1cd28d1ce1c7148d667efaaaef9d49774a913f88438a7d57681119cb01eff80b3ad90c003ecd751852ee447ef232ada4789d684f802eeaa29ec35d06b7dfb3b4993171550e3625ff2f56b9157d5b565845f99575e70abd8c9b6d4ddf9e85fdd909b1cda38278147a021e6e2e6e18f9fcb053cb116e62fb5a4a2db50d3640da8d1848e6ea8fae43d334dac942bb374ecb84e89d4b793f77208c9a56c1a3ec76352e14d93cb888482cc91984747dd5f988bc2c416b23f3ebc3495ec919f540968807fff982e1066eedfca74ec0edc423bb13b36ecde2d73f87e8fa83f4bc3f3da36eb210c4a4bf30731774eac51807ae0b4cbf3fa4864254898427ce35b07b281505555668a6c364b2a9cbdeb02f2f0186c',
+    client_id: '0a9f8dd9-9f13-4138-abf7-566f30886cf1',
+    client_secret: 'ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu'
+  })
+});
+
+const newTokens = await response.json();
+```
+
+### 3. Client Credentials Grant
+
+For machine-to-machine (M2M) authentication, without user involvement.
+
+**Example Request:**
+
+```javascript  theme={null}
+const response = await fetch('https://accounts.mubarokah.com/oauth/token', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/x-www-form-urlencoded'
+  },
+  body: new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_id: '0a9f8dd9-9f13-4138-abf7-566f30886cf1',
+    client_secret: 'ORgE1SbhnjX73A3NPk2zZjxN0fMJetKPxXsH7Hyu',
+    scope: 'server-operations' // optional
+  })
+});
+
+const appToken = await response.json();
+```
+
+## Example Success Response
+
+```json  theme={null}
+{
+  "token_type": "Bearer",
+  "expires_in": 86400,
+  "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
+  "refresh_token": "def5020023761949f076f069874c92d8...",
+  "scope": "view-user detail-user"
+}
+```
+
+## Error Response
+
+If the request fails, it will return a JSON error response:
+
+```json  theme={null}
+{
+  "error": "invalid_grant",
+  "error_description": "The provided authorization grant is invalid, expired, revoked, does not match the redirection URI used in the authorization request, or was issued to another client.",
+  "message": "The provided authorization grant is invalid or expired.",
+  "hint": "Check the authorization code and try again."
+}
+```
+
+## Common Error Codes
+
+| Error Code               | Description                               | Solution                                                            |
+| ------------------------ | ----------------------------------------- | ------------------------------------------------------------------- |
+| `invalid_request`        | Missing or malformed parameters           | Check all required parameters                                       |
+| `invalid_client`         | Client authentication failed              | Verify `client_id` and `client_secret`                              |
+| `invalid_grant`          | Authorization grant invalid/expired       | Obtain new authorization code                                       |
+| `unauthorized_client`    | Client not authorized for this grant type | Check client configuration                                          |
+| `unsupported_grant_type` | Grant type not supported                  | Use: `authorization_code`, `refresh_token`, or `client_credentials` |
+| `invalid_scope`          | Requested scope is invalid                | Check available scopes                                              |
+
+## Security Best Practices
+
+<Warning>
+  **`Never expose client_secret in client-side code!`** `client_secret` must be stored securely on your server.
+</Warning>
+
+1. **Store credentials securely using environment variables**
+2. **Use HTTPS for all OAuth communications**
+3. **Implement proper error handling**
+4. **Validate state parameter for CSRF protection**
+5. **Rotate credentials regularly**
+6. **Monitor token usage for suspicious activity**
+7. **Implement token refresh logic**
+8. **Use PKCE for public clients**
+
+
+---
+
+# Scopes and Permissions
+
+> Learn about OAuth 2.0 scopes used by Mubarokah ID, their associated permissions, and the approval process for sensitive scopes.
+
+# Scopes and Permissions
+
+Mubarokah ID uses OAuth 2.0 scopes to allow users to grant varying levels of access to their account data to client applications. When your application requests authorization, it must specify which scopes it needs. The user will see these requested scopes on the consent screen and can choose to approve or deny them.
+
+## Available Scopes
+
+Here are the primary scopes available through Mubarokah ID:
+
+### Scope Hierarchy
+
+```mermaid  theme={null}
+graph TD
+    A[Mubarokah ID OAuth Scopes] --> B[view-user Scope]
+    A --> C[detail-user Scope]
+
+    B --> B1[Access to Basic Profile Information]
+    B1 --> B2[User ID]
+    B1 --> B3[Name]
+    B1 --> B4[Email]
+    B1 --> B5[Username]
+    B1 --> B6[Profile Picture URL]
+    B1 --> B7[Gender]
+
+    C --> C1[Access to All view-user Data PLUS:]
+    C --> C2[Sensitive Personal Information]
+    C2 --> C3[Phone Number]
+    C2 --> C4[Date of Birth]
+    C2 --> C5[Place of Birth]
+    C2 --> C6[Full Address]
+    C2 --> C7[Biography / About Me]
+
+    C --> C8[Requires Admin Approval for Client App]
+
+    style B fill:#e8f5e8,stroke:#333,stroke-width:2px
+    style C fill:#ffebee,stroke:#333,stroke-width:2px
+    style C8 fill:#f3e5f5,stroke:#333,stroke-width:2px,color:red
+```
+
+### Scope Permission Matrix
+
+| Scope         | Data Access Granted                                                                       | Approval Process for Client                              | Common Use Cases                                                                                                            | API Endpoints Covered                                         |
+| ------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `view-user`   | ✅ Basic profile attributes (ID, name, email, username, profile picture, gender).          | **Automatic** upon user consent.                         | • Displaying user's name/avatar. <br /> • Personalizing the user experience. <br /> • Basic account identification.         | [`/api/user`](../api-reference/user/get-user-info)            |
+| `detail-user` | ✅ All data from `view-user`. <br /> ✅ Sensitive personal info (phone, DOB, address, bio). | **Manual Admin Review** of your application is required. | • KYC (Know Your Customer) processes. <br /> • Address verification for services. <br /> • Contact information integration. | [`/api/user/details`](../api-reference/user/get-user-details) |
+
+<Info>
+  Always request the minimum number of scopes necessary for your application's functionality. Requesting excessive scopes can lead to lower user consent rates.
+</Info>
+
+## Practical Implementation Examples
+
+### 1. Basic OAuth Flow with `view-user` Scope
+
+```javascript  theme={null}
+// Step 1: Generate authorization URL
+const generateAuthURL = () => {
+  const authParams = new URLSearchParams({
+    response_type: 'code',
+    client_id: 'your_client_id',
+    redirect_uri: 'https://yourapp.com/auth/callback',
+    scope: 'view-user',
+    state: generateRandomState()
+  });
+  
+  return `https://accounts.mubarokah.com/oauth/authorize?${authParams}`;
+};
+
+// Step 2: Exchange authorization code for access token
+const exchangeCodeForToken = async (authorizationCode) => {
+  const response = await fetch('https://accounts.mubarokah.com/oauth/token', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded'
+    },
+    body: new URLSearchParams({
+      grant_type: 'authorization_code',
+      client_id: 'your_client_id',
+      client_secret: 'your_client_secret',
+      code: authorizationCode,
+      redirect_uri: 'https://yourapp.com/auth/callback'
+    })
+  });
+  
+  return await response.json();
+};
+
+// Step 3: Fetch user information
+const getUserInfo = async (accessToken) => {
+  const response = await fetch('https://accounts.mubarokah.com/api/user', {
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Accept': 'application/json'
+    }
+  });
+  
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+  }
+  
+  return await response.json();
+};
+
+// Complete workflow example
+const handleOAuthCallback = async (code, state) => {
+  try {
+    // Validate state parameter (CSRF protection)
+    if (!validateState(state)) {
+      throw new Error('Invalid state parameter');
+    }
+    
+    // Exchange code for tokens
+    const tokenResponse = await exchangeCodeForToken(code);
+    const { access_token, refresh_token } = tokenResponse;
+    
+    // Fetch user information
+    const userInfo = await getUserInfo(access_token);
+    
+    console.log('User authenticated:', userInfo);
+    
+    // Store tokens securely (server-side only)
+    await storeTokensSecurely(userInfo.id, access_token, refresh_token);
+    
+    return userInfo;
+  } catch (error) {
+    console.error('OAuth callback error:', error);
+    throw error;
+  }
+};
+```
+
+### 2. Advanced Implementation with `detail-user` Scope
+
+```javascript  theme={null}
+// Enhanced authorization URL for detailed user information
+const generateDetailedAuthURL = () => {
+  const authParams = new URLSearchParams({
+    response_type: 'code',
+    client_id: 'your_approved_client_id',
+    redirect_uri: 'https://yourapp.com/auth/callback',
+    scope: 'view-user detail-user',
+    state: generateRandomState(),
+    prompt: 'consent' // Ensure user sees the consent screen
+  });
+  
+  return `https://accounts.mubarokah.com/oauth/authorize?${authParams}`;
+};
+
+// Fetch detailed user information (requires admin approval)
+const getUserDetails = async (accessToken) => {
+  try {
+    const response = await fetch('https://accounts.mubarokah.com/api/user/details', {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`,
+        'Accept': 'application/json'
+      }
+    });
+    
+    if (response.status === 403) {
+      const error = await response.json();
+      if (error.error === 'unapproved_scope') {
+        throw new Error('Your application needs admin approval to access detailed user information. Please contact support.');
+      }
+      if (error.error === 'insufficient_scope') {
+        throw new Error('Access token does not have the required detail-user scope.');
+      }
+    }
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    return await response.json();
+  } catch (error) {
+    console.error('Failed to fetch user details:', error);
+    throw error;
+  }
+};
+
+// Complete user data aggregation
+const getCompleteUserProfile = async (accessToken) => {
+  try {
+    // Always fetch basic info first
+    const basicInfo = await getUserInfo(accessToken);
+    
+    let detailedInfo = null;
+    try {
+      // Attempt to fetch detailed info if approved
+      detailedInfo = await getUserDetails(accessToken);
+    } catch (error) {
+      console.warn('Detailed user info not available:', error.message);
+    }
+    
+    return {
+      basic: basicInfo,
+      detailed: detailedInfo,
+      hasDetailedAccess: detailedInfo !== null
+    };
+  } catch (error) {
+    console.error('Failed to get complete user profile:', error);
+    throw error;
+  }
+};
+```
+
+### 3. Token Refresh Implementation
+
+```javascript  theme={null}
+// Refresh access token using refresh token
+const refreshAccessToken = async (refreshToken) => {
+  const response = await fetch('https://accounts.mubarokah.com/oauth/token', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded'
+    },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+      client_id: 'your_client_id',
+      client_secret: 'your_client_secret'
+    })
+  });
+  
+  if (!response.ok) {
+    throw new Error('Failed to refresh token');
+  }
+  
+  return await response.json();
+};
+
+// API wrapper with automatic token refresh
+class MubarokahAPIClient {
+  constructor(accessToken, refreshToken) {
+    this.accessToken = accessToken;
+    this.refreshToken = refreshToken;
+  }
+  
+  async makeAuthenticatedRequest(url, options = {}) {
+    const requestOptions = {
+      ...options,
+      headers: {
+        'Authorization': `Bearer ${this.accessToken}`,
+        'Accept': 'application/json',
+        ...options.headers
+      }
+    };
+    
+    let response = await fetch(url, requestOptions);
+    
+    // Handle token expiration
+    if (response.status === 401) {
+      try {
+        const tokenResponse = await refreshAccessToken(this.refreshToken);
+        this.accessToken = tokenResponse.access_token;
+        
+        // Retry the original request with new token
+        requestOptions.headers['Authorization'] = `Bearer ${this.accessToken}`;
+        response = await fetch(url, requestOptions);
+      } catch (refreshError) {
+        throw new Error('Token refresh failed. User needs to re-authenticate.');
+      }
+    }
+    
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    return await response.json();
+  }
+  
+  async getUserInfo() {
+    return this.makeAuthenticatedRequest('https://accounts.mubarokah.com/api/user');
+  }
+  
+  async getUserDetails() {
+    return this.makeAuthenticatedRequest('https://accounts.mubarokah.com/api/user/details');
+  }
+}
+```
+
+## `detail-user` Scope Approval Process
+
+The `detail-user` scope provides access to sensitive personal information. Due to the sensitive nature of this data, applications requesting this scope must undergo an administrative approval process.
+
+### Approval Requirements
+
+<Steps>
+  <Step title="Application Registration">
+    Your application must first be registered with Mubarokah ID and have basic OAuth integration working with the `view-user` scope.
+  </Step>
+
+  <Step title="Documentation Submission">
+    Submit the following documentation:
+
+    * **Privacy Policy**: Clear statement on how user data will be handled
+    * **Data Usage Justification**: Detailed explanation of why detailed user information is needed
+    * **Security Measures**: Description of data protection measures in your application
+    * **Compliance Information**: Evidence of GDPR, CCPA, or local data protection compliance
+  </Step>
+
+  <Step title="Technical Review">
+    Your application will undergo a security review including:
+
+    * Code review of OAuth implementation
+    * Security audit of data handling procedures
+    * Testing of data deletion capabilities
+  </Step>
+
+  <Step title="Approval Decision">
+    If approved, your application can successfully request the `detail-user` scope during OAuth flows. If rejected, reasons will be provided with guidance for resubmission.
+  </Step>
+</Steps>
+
+<Warning>
+  **Important**: Even after obtaining the `detail-user` scope in an access token, your application will receive a `403 Forbidden` error when calling `/api/user/details` unless your client application has received administrative approval.
+</Warning>
+
+### Approval Process Implementation
+
+```javascript  theme={null}
+// Check if client application has approval for detail-user scope
+const checkScopeApproval = async (clientId) => {
+  try {
+    const response = await fetch(`https://accounts.mubarokah.com/api/admin/scope-approval/${clientId}`, {
+      headers: {
+        'Authorization': `Bearer ${adminToken}`,
+        'Accept': 'application/json'
+      }
+    });
+    
+    if (response.ok) {
+      const approval = await response.json();
+      return approval.scopes.includes('detail-user');
+    }
+    
+    return false;
+  } catch (error) {
+    console.error('Failed to check scope approval:', error);
+    return false;
+  }
+};
+
+// Graceful handling of unapproved scope requests
+const safeGetUserDetails = async (accessToken) => {
+  try {
+    return await getUserDetails(accessToken);
+  } catch (error) {
+    if (error.message.includes('unapproved_scope')) {
+      // Handle gracefully - maybe show an upgrade message to admin
+      return {
+        error: 'approval_required',
+        message: 'This feature requires additional permissions. Please contact your administrator to request approval for detailed user access.',
+        upgradeAction: 'request_approval'
+      };
+    }
+    throw error;
+  }
+};
+```
+
+## Compliance and Legal Considerations
+
+Handling user data, especially sensitive information accessible via the `detail-user` scope, comes with significant responsibilities.
+
+### Data Usage Guidelines
+
+<Tabs>
+  <Tab title="🔒 Data Minimization">
+    ```javascript  theme={null}
+    // Good: Only request scopes you actively use
+    const authURL = generateAuthURL(['view-user']); // Basic profile only
+
+    // Avoid: Requesting excessive scopes
+    const authURL = generateAuthURL(['view-user', 'detail-user']); // Only if truly needed
+    ```
+  </Tab>
+
+  <Tab title="📝 Purpose Limitation">
+    ```javascript  theme={null}
+    // Good: Clear purpose-specific data usage
+    class UserProfileService {
+      async getProfileForDisplay(accessToken) {
+        const basicInfo = await getUserInfo(accessToken);
+        return {
+          displayName: basicInfo.name,
+          avatar: basicInfo.profile_picture,
+          username: basicInfo.username
+        };
+      }
+      
+      async getProfileForKYC(accessToken) {
+        // Only call if explicitly needed for KYC
+        const detailedInfo = await getUserDetails(accessToken);
+        return {
+          fullName: detailedInfo.name,
+          dateOfBirth: detailedInfo.date_of_birth,
+          address: detailedInfo.address
+        };
+      }
+    }
+    ```
+  </Tab>
+
+  <Tab title="🛡️ Data Security">
+    ```javascript  theme={null}
+    // Implementation with encryption and secure storage
+    class SecureUserDataManager {
+      constructor(encryptionKey) {
+        this.encryptionKey = encryptionKey;
+      }
+      
+      async storeUserData(userId, userData) {
+        const encryptedData = await this.encrypt(userData);
+        
+        // Store with automatic expiration
+        await this.secureStorage.set(`user:${userId}`, encryptedData, {
+          ttl: 24 * 60 * 60 * 1000, // 24 hours
+          encrypted: true
+        });
+      }
+      
+      async getUserData(userId) {
+        const encryptedData = await this.secureStorage.get(`user:${userId}`);
+        return encryptedData ? await this.decrypt(encryptedData) : null;
+      }
+      
+      async deleteUserData(userId) {
+        await this.secureStorage.delete(`user:${userId}`);
+        // Also clear from any caches
+        await this.clearUserFromCaches(userId);
+      }
+    }
+    ```
+  </Tab>
+
+  <Tab title="🗑️ Data Retention">
+    ```javascript  theme={null}
+    // Automatic data cleanup implementation
+    class DataRetentionManager {
+      constructor() {
+        this.retentionPeriods = {
+          basic_profile: 365 * 24 * 60 * 60 * 1000, // 1 year
+          detailed_profile: 90 * 24 * 60 * 60 * 1000, // 90 days
+          access_logs: 180 * 24 * 60 * 60 * 1000 // 6 months
+        };
+      }
+      
+      async scheduleDataCleanup(userId, dataType) {
+        const retentionPeriod = this.retentionPeriods[dataType];
+        const expiryDate = new Date(Date.now() + retentionPeriod);
+        
+        await this.scheduler.schedule('cleanup_user_data', {
+          userId,
+          dataType,
+          executeAt: expiryDate
+        });
+      }
+      
+      async handleUserAccountDeletion(userId) {
+        // Immediate deletion of all user data
+        await Promise.all([
+          this.deleteUserProfile(userId),
+          this.deleteUserAccessLogs(userId),
+          this.deleteUserFromThirdPartyServices(userId),
+          this.cancelScheduledCleanups(userId)
+        ]);
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Privacy Compliance Implementation
+
+```javascript  theme={null}
+// GDPR/Privacy compliance helper
+class PrivacyComplianceManager {
+  async handleDataSubjectRequest(userId, requestType) {
+    switch (requestType) {
+      case 'access':
+        return this.exportUserData(userId);
+      
+      case 'rectification':
+        return this.updateUserData(userId);
+      
+      case 'erasure':
+        return this.deleteUserData(userId);
+      
+      case 'portability':
+        return this.exportPortableUserData(userId);
+      
+      case 'restriction':
+        return this.restrictUserDataProcessing(userId);
+      
+      default:
+        throw new Error('Unsupported data subject request type');
+    }
+  }
+  
+  async exportUserData(userId) {
+    const userData = await this.getUserCompleteProfile(userId);
+    const accessLogs = await this.getUserAccessLogs(userId);
+    
+    return {
+      profile: userData,
+      access_history: accessLogs,
+      data_retention_info: this.getRetentionInfo(userId),
+      export_date: new Date().toISOString()
+    };
+  }
+  
+  async auditDataAccess(userId, accessType, purpose) {
+    await this.auditLogger.log({
+      user_id: userId,
+      access_type: accessType,
+      purpose: purpose,
+      timestamp: new Date(),
+      ip_address: this.getCurrentIPAddress(),
+      user_agent: this.getCurrentUserAgent()
+    });
+  }
+}
+```
+
+## Error Handling Best Practices
+
+```javascript  theme={null}
+// Comprehensive error handling for OAuth and API calls
+class MubarokahErrorHandler {
+  static handleOAuthError(error) {
+    const errorMappings = {
+      'invalid_request': 'The request is missing required parameters or contains invalid values.',
+      'invalid_client': 'Client authentication failed or client is not authorized.',
+      'invalid_grant': 'The authorization code is invalid, expired, or revoked.',
+      'unauthorized_client': 'The client is not authorized to use this authorization grant type.',
+      'unsupported_grant_type': 'The grant type is not supported by the authorization server.',
+      'invalid_scope': 'The requested scope is invalid, unknown, or malformed.',
+      'access_denied': 'The user denied the authorization request.',
+      'unapproved_scope': 'Your application needs admin approval to access this data.'
+    };
+    
+    return {
+      code: error.error || 'unknown_error',
+      message: errorMappings[error.error] || error.error_description || 'An unknown error occurred',
+      userMessage: this.getUserFriendlyMessage(error.error)
+    };
+  }
+  
+  static getUserFriendlyMessage(errorCode) {
+    const userMessages = {
+      'access_denied': 'You declined to authorize this application. Please try again if you want to proceed.',
+      'invalid_scope': 'This application is requesting permissions that are not available.',
+      'unapproved_scope': 'This feature requires additional approval. Please contact support.',
+      'token_expired': 'Your session has expired. Please log in again.',
+      'insufficient_scope': 'You need to grant additional permissions to use this feature.'
+    };
+    
+    return userMessages[errorCode] || 'An error occurred during authentication. Please try again.';
+  }
+}
+
+// Usage example with proper error handling
+const handleUserAuthentication = async (authCode) => {
+  try {
+    const tokens = await exchangeCodeForToken(authCode);
+    const userProfile = await getCompleteUserProfile(tokens.access_token);
+    
+    return {
+      success: true,
+      user: userProfile,
+      tokens: tokens
+    };
+  } catch (error) {
+    const handledError = MubarokahErrorHandler.handleOAuthError(error);
+    
+    console.error('Authentication error:', handledError);
+    
+    return {
+      success: false,
+      error: handledError,
+      retryable: ['token_expired', 'access_denied'].includes(handledError.code)
+    };
+  }
+};
+```
+
+<Note>
+  This implementation provides production-ready code examples that can be directly used and tested with the Mubarokah ID OAuth system. All endpoints use the correct `https://accounts.mubarokah.com/` domain and include proper error handling, security measures, and compliance considerations.
+</Note>
+
+
+---
+
