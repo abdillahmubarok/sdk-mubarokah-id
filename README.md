@@ -1,179 +1,117 @@
 # @mubarokah/auth-js
 
-> TypeScript SDK for integrating **Mubarokah ID SSO** (OAuth 2.0 + PKCE) into React / Next.js applications.
-
-[![TypeScript](https://img.shields.io/badge/TypeScript-5.3+-blue.svg)](https://www.typescriptlang.org/)
-[![React](https://img.shields.io/badge/React-17+-61dafb.svg)](https://react.dev/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+The official TypeScript SDK for integrating **Mubarokah ID SSO** into React and Next.js applications. [cite_start]This SDK implements the OAuth 2.0 Authorization Code Grant with Proof Key for Code Exchange (PKCE) for secure, browser-based authentication[cite: 1, 2, 30, 31, 126, 127, 211, 247, 281].
 
 ---
 
 ## Features
 
-- 🔐 **OAuth 2.0 + PKCE** — Secure authorization flow for public clients (SPA)
-- ⚛️ **React Integration** — `MubarokahProvider` + `useMubarokahAuth` hook
-- 🔒 **Zero client_secret exposure** — Designed exclusively for browser environments
-- 📦 **Zero external dependencies** — Uses Web Crypto API for PKCE
-- 🎯 **Full TypeScript support** — Typed interfaces for all API responses
+* [cite_start]🔐 **OAuth 2.0 + PKCE** — Secure authorization flow designed for public clients (SPAs) without exposing client secrets[cite: 30, 31, 45, 126, 127, 177, 212, 247, 282].
+* ⚛️ **React Ready** — Includes `MubarokahProvider` and `useMubarokahAuth` for seamless React integration.
+* [cite_start]🔄 **Automatic Token Refresh** — Handles token expiration and silent refreshing[cite: 4, 72, 73, 145, 154, 180, 189, 215, 224, 250, 259, 325, 326, 329].
+* [cite_start]🛡️ **CSRF Protection** — Internal state validation to prevent Cross-Site Request Forgery attacks[cite: 25, 26, 37, 120, 121, 122, 131, 138, 176, 211, 246, 281, 307].
+* [cite_start]📦 **Zero External Dependencies** — Lightweight implementation using the native Web Crypto API[cite: 129, 391].
 
 ---
 
 ## Installation
 
+Install the package directly from the GitHub repository:
+
 ```bash
-npm install @mubarokah/auth-js
+npm install github:abdillahmubarok/sdk-mubarokah-id
 # or
-yarn add @mubarokah/auth-js
-# or
-pnpm add @mubarokah/auth-js
+yarn add github:abdillahmubarok/sdk-mubarokah-id
 ```
 
-**Peer Dependencies:** `react >= 17.0.0`, `react-dom >= 17.0.0`
+**Peer Dependencies:** Requires `react >= 17.0.0` and `react-dom >= 17.0.0`.
 
 ---
 
-## Quick Start (React / Next.js)
+## Getting Started (React / Next.js)
 
-### 1. Wrap your app with `MubarokahProvider`
+### 1. Configure the Provider
+
+Wrap your application (e.g., in `app/layout.tsx` for Next.js) with the `MubarokahProvider`.
 
 ```tsx
-// app/layout.tsx  (Next.js App Router)
 'use client';
 
 import { MubarokahProvider } from '@mubarokah/auth-js';
 
-const authConfig = {
-  clientId: 'YOUR_CLIENT_ID',
-  redirectUri: 'http://localhost:3000/auth/callback',
-  scope: 'view-user',
+const config = {
+  [cite_start]clientId: 'your-client-id', // Obtain from Mubarokah ID Dashboard [cite: 19, 20, 116, 148, 183, 218, 253]
+  [cite_start]redirectUri: 'https://your-app.com/callback', // Must match registered URI [cite: 21, 22, 23, 117, 118]
+  [cite_start]scope: 'view-user', // Request desired permissions [cite: 24, 119, 284, 304]
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body>
-        <MubarokahProvider
-          config={authConfig}
-          onAuthSuccess={(user) => console.log('Logged in:', user.name)}
-          onAuthError={(err) => console.error('Auth failed:', err)}
-        >
-          {children}
-        </MubarokahProvider>
-      </body>
-    </html>
+    <MubarokahProvider config={config}>
+      {children}
+    </MubarokahProvider>
   );
 }
 ```
 
-### 2. Use the `useMubarokahAuth` hook
+### 2. Use Authentication in Components
+
+Use the `useMubarokahAuth` hook to access the user state and authentication methods.
 
 ```tsx
 'use client';
 
 import { useMubarokahAuth } from '@mubarokah/auth-js';
 
-export default function LoginButton() {
+export default function Navbar() {
   const { isAuthenticated, isLoading, user, login, logout } = useMubarokahAuth();
 
-  if (isLoading) return <p>Loading...</p>;
+  if (isLoading) return <span>Loading...</span>;
 
   if (isAuthenticated && user) {
     return (
       <div>
-        <p>Welcome, {user.name}!</p>
-        <button onClick={logout}>Logout</button>
+        <span>Welcome, {user.name}!</span>
+        <button onClick={logout}>Sign Out</button>
       </div>
     );
   }
 
-  return <button onClick={login}>Login with Mubarokah ID</button>;
-}
-```
-
-### 3. Create a callback page
-
-```tsx
-// app/auth/callback/page.tsx
-'use client';
-
-export default function CallbackPage() {
-  // MubarokahProvider auto-handles the callback when it detects ?code= in the URL.
-  // You can show a loading spinner here while the token exchange completes.
-  return <p>Authenticating...</p>;
+  return <button onClick={login}>Sign In with Mubarokah ID</button>;
 }
 ```
 
 ---
 
-## Standalone Usage (without React)
+## Scopes and Permissions
 
-```ts
-import { MubarokahAuth } from '@mubarokah/auth-js';
+[cite_start]Mubarokah ID uses scopes to control access to user data[cite: 283, 284].
 
-const auth = new MubarokahAuth({
-  clientId: 'YOUR_CLIENT_ID',
-  redirectUri: 'http://localhost:3000/callback',
-  scope: 'view-user detail-user',
-});
-
-// Redirect to login
-await auth.login();
-
-// On callback page
-const tokens = await auth.handleCallback();
-const user = await auth.getUser();
-const details = await auth.getUserDetails();
-
-// Check auth state
-auth.isAuthenticated(); // true
-auth.isTokenExpired();  // false
-
-// Logout
-auth.logout();
-```
+| Scope | Description | API Endpoints |
+| :--- | :--- | :--- |
+| `view-user` | [cite_start]**Basic Profile**: Access to ID, name, email, username, and profile picture[cite: 286, 287, 294, 295, 296]. | [cite_start]`/api/user` [cite: 297, 306, 335, 354] |
+| `detail-user` | [cite_start]**Detailed Profile**: Includes phone number, date of birth, and address[cite: 286, 287, 297, 298]. [cite_start]**Requires Admin Approval**[cite: 299, 337, 338, 341, 343]. | [cite_start]`/api/user/details` [cite: 300, 314, 336, 343, 356] |
 
 ---
 
 ## API Reference
 
-### `MubarokahAuth` Class
+### `MubarokahAuth` Instance Methods
 
-| Method | Returns | Description |
-|---|---|---|
-| `login()` | `Promise<void>` | Redirect to Mubarokah ID login |
-| `getAuthorizationUrl()` | `Promise<string>` | Get the authorization URL without redirecting |
-| `handleCallback()` | `Promise<TokenResponse>` | Handle OAuth callback and exchange code for tokens |
-| `getToken()` | `string \| null` | Get current access token |
-| `isTokenExpired()` | `boolean` | Check if token has expired |
-| `isAuthenticated()` | `boolean` | Check if user is authenticated |
-| `getUser()` | `Promise<MubarokahUser>` | Fetch basic user profile |
-| `getUserDetails()` | `Promise<MubarokahUserDetails>` | Fetch detailed user profile |
-| `logout()` | `void` | Clear all stored auth data |
-
-### `MubarokahAuthConfig`
-
-| Property | Type | Required | Default |
-|---|---|---|---|
-| `clientId` | `string` | ✅ | — |
-| `redirectUri` | `string` | ✅ | — |
-| `scope` | `string` | ❌ | `"view-user"` |
-| `providerUrl` | `string` | ❌ | `"https://accounts.mubarokah.com"` |
-
-### Available Scopes
-
-| Scope | Data Access | Endpoint |
-|---|---|---|
-| `view-user` | Basic profile (name, email, username, avatar, gender) | `/api/user` |
-| `detail-user` | Extended data (phone, DOB, address, bio) — requires admin approval | `/api/user/details` |
+* [cite_start]**`login()`**: Redirects the user to the Mubarokah ID authorization page at `https://accounts.mubarokah.com/oauth/authorize`[cite: 7, 14, 15, 39, 42, 112, 113, 304, 313, 391].
+* [cite_start]**`handleCallback()`**: Exchanges the authorization code received in the URL for access and refresh tokens at `https://accounts.mubarokah.com/oauth/token`[cite: 6, 11, 43, 44, 46, 47, 65, 143, 144, 146, 181, 216, 251, 305, 326].
+* [cite_start]**`getUser()`**: Fetches basic profile information[cite: 297, 306, 335, 354].
+* [cite_start]**`getUserDetails()`**: Fetches sensitive profile data (if authorized)[cite: 300, 314, 336, 356].
+* **`logout()`**: Clears local authentication state and redirects to the logout endpoint.
 
 ---
 
-## Security
+## Security Best Practices
 
-- **PKCE** is used for all authorization flows (no `client_secret` on client side)
-- **State parameter** validated against CSRF attacks
-- **sessionStorage** used for token storage (cleared on tab close)
-- **60-second buffer** before token expiry to prevent edge-case failures
+* [cite_start]**Public Clients**: This SDK is designed for public clients where a `client_secret` cannot be kept secure[cite: 30, 31, 45, 126, 127, 212, 247, 282].
+* [cite_start]**State Validation**: Always utilize the `state` parameter to prevent CSRF attacks[cite: 25, 26, 37, 121, 122, 131, 138, 176, 211, 246, 281, 307].
+* **Token Storage**: Tokens are stored in `sessionStorage` by default to ensure they are cleared when the browser tab is closed.
+* [cite_start]**Minimum Scopes**: Only request the scopes necessary for your application to function[cite: 301, 302, 352, 353].
 
 ---
 
