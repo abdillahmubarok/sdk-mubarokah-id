@@ -1,72 +1,99 @@
-/**
- * @mubarokah/auth-js — PKCE Utilities
- *
- * Implements Proof Key for Code Exchange (RFC 7636) using the
- * Web Crypto API. Zero external dependencies.
- */
+// ============================================================================
+// Mubarokah ID SDK — PKCE (Proof Key for Code Exchange) Utilities
+// ============================================================================
+
+import { randomBytes, createHash } from 'node:crypto';
 
 /**
- * Generate a cryptographically-secure random string.
- *
- * Uses `crypto.getRandomValues` (available in all modern browsers
- * and Node ≥ 15 via the `globalThis.crypto` polyfill).
- *
- * The output alphabet follows RFC 7636 §4.1 (unreserved URI characters).
- *
- * @param length — Desired string length (default 64, min 43 per spec).
+ * Hasil generate PKCE pair.
  */
-export function generateRandomString(length = 64): string {
-  const CHARSET =
-    'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
-  const randomValues = new Uint8Array(length);
-  crypto.getRandomValues(randomValues);
+export interface PKCEPair {
+  /** Random code verifier (simpan di session, kirim saat token exchange) */
+  codeVerifier: string;
+  /** SHA-256 hash dari code verifier, base64url-encoded (kirim saat authorization) */
+  codeChallenge: string;
+}
 
+/**
+ * Generate random code verifier untuk PKCE.
+ *
+ * Menghasilkan string acak 43-128 karakter yang aman secara kriptografis
+ * sesuai spesifikasi RFC 7636.
+ *
+ * @param length - Panjang code verifier (default: 64)
+ * @returns Code verifier string
+ *
+ * @example
+ * ```typescript
+ * const verifier = generateCodeVerifier();
+ * // => 'dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk...'
+ * ```
+ */
+export function generateCodeVerifier(length: number = 64): string {
+  const allowedChars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~';
+  const bytes = randomBytes(length);
   let result = '';
   for (let i = 0; i < length; i++) {
-    result += CHARSET[randomValues[i] % CHARSET.length];
+    result += allowedChars[bytes[i] % allowedChars.length];
   }
   return result;
 }
 
 /**
- * Compute the SHA-256 digest of a plain-text string.
+ * Generate code challenge dari code verifier menggunakan SHA-256.
  *
- * @returns Raw `ArrayBuffer` of the 32-byte hash.
+ * @param codeVerifier - Code verifier yang sudah di-generate
+ * @returns Code challenge (base64url-encoded)
+ *
+ * @example
+ * ```typescript
+ * const challenge = generateCodeChallenge(verifier);
+ * // => 'E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM'
+ * ```
  */
-export async function sha256(plain: string): Promise<ArrayBuffer> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(plain);
-  return crypto.subtle.digest('SHA-256', data);
+export function generateCodeChallenge(codeVerifier: string): string {
+  const hash = createHash('sha256').update(codeVerifier).digest('base64');
+  // Convert base64 to base64url (RFC 4648)
+  return hash.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 /**
- * Encode an `ArrayBuffer` as a Base64-URL string (no padding).
+ * Generate PKCE code verifier dan code challenge pair.
  *
- * Follows RFC 7636 §Appendix A encoding rules:
- *   • `+` → `-`
- *   • `/` → `_`
- *   • Trailing `=` stripped
+ * Fungsi convenience yang menggabungkan `generateCodeVerifier()` dan
+ * `generateCodeChallenge()` dalam satu panggilan.
+ *
+ * @returns Objek berisi codeVerifier dan codeChallenge
+ *
+ * @example
+ * ```typescript
+ * import { generatePKCEPair } from 'mubarokah-id-sdk';
+ *
+ * const { codeVerifier, codeChallenge } = generatePKCEPair();
+ *
+ * // Simpan codeVerifier di session
+ * req.session.codeVerifier = codeVerifier;
+ *
+ * // Kirim codeChallenge ke authorization endpoint
+ * const authUrl = client.auth.getAuthorizationUrl({
+ *   usePKCE: true, // SDK handle otomatis
+ * });
+ * ```
  */
-export function base64UrlEncode(buffer: ArrayBuffer): string {
-  const bytes = new Uint8Array(buffer);
-  let binary = '';
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i]);
-  }
-  return btoa(binary)
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
+export function generatePKCEPair(): PKCEPair {
+  const codeVerifier = generateCodeVerifier();
+  const codeChallenge = generateCodeChallenge(codeVerifier);
+  return { codeVerifier, codeChallenge };
 }
 
 /**
- * Derive a PKCE `code_challenge` from a `code_verifier` using the S256 method.
+ * Generate random state string untuk CSRF protection.
  *
- * Equivalent to: `BASE64URL(SHA256(code_verifier))`
+ * @param length - Panjang state string (default: 40)
+ * @returns Random state string
  */
-export async function generateCodeChallenge(
-  codeVerifier: string,
-): Promise<string> {
-  const digest = await sha256(codeVerifier);
-  return base64UrlEncode(digest);
+export function generateState(length: number = 40): string {
+  return randomBytes(Math.ceil(length / 2))
+    .toString('hex')
+    .slice(0, length);
 }

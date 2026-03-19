@@ -1,55 +1,59 @@
 {
-  "name": "@mubarokah/auth-js",
+  "name": "mubarokah-id-sdk",
   "version": "1.0.0",
-  "description": "TypeScript SDK for integrating Mubarokah ID SSO (OAuth 2.0 + PKCE) into React/Next.js applications",
-  "main": "dist/index.js",
-  "module": "dist/index.mjs",
-  "types": "dist/index.d.ts",
+  "description": "TypeScript SDK for Mubarokah ID SSO - OAuth 2.0 integration made easy",
+  "main": "./dist/index.js",
+  "module": "./dist/index.mjs",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "import": "./dist/index.mjs",
-      "require": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "import": {
+        "types": "./dist/index.d.mts",
+        "default": "./dist/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
     }
   },
   "files": [
     "dist",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsup",
+    "dev": "tsup --watch",
     "typecheck": "tsc --noEmit",
-    "prepare": "npm run build",
+    "example": "npx tsx examples/express-app/server.ts",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
     "mubarokah",
+    "mubarokah-id",
     "sso",
+    "oauth",
     "oauth2",
-    "pkce",
-    "react",
-    "nextjs",
-    "authentication"
+    "authentication",
+    "laravel-passport",
+    "typescript",
+    "sdk"
   ],
   "author": "Mubarokah",
   "license": "MIT",
-  "peerDependencies": {
-    "react": ">=17.0.0",
-    "react-dom": ">=17.0.0"
+  "engines": {
+    "node": ">=18.0.0"
   },
   "devDependencies": {
-    "@types/react": "^18.2.0",
-    "@types/react-dom": "^18.2.0",
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "typescript": "^5.3.0"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/abdillahmubarok/sdk-mubarokah-id.git"
-  },
-  "bugs": {
-    "url": "https://github.com/abdillahmubarok/sdk-mubarokah-id/issues"
-  },
-  "homepage": "https://github.com/abdillahmubarok/sdk-mubarokah-id#readme"
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "dotenv": "^16.4.0",
+    "express": "^4.21.0",
+    "express-session": "^1.18.0",
+    "@types/express-session": "^1.18.0",
+    "tsup": "^8.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.6.0"
+  }
 }

@@ -1,33 +1,80 @@
+// ============================================================================
+// Mubarokah ID SDK — Public API
+// ============================================================================
+
 /**
- * @mubarokah/auth-js
+ * @module mubarokah-id-sdk
  *
- * TypeScript SDK for integrating Mubarokah ID SSO (OAuth 2.0 + PKCE)
- * into React / Next.js applications.
+ * TypeScript SDK untuk integrasi OAuth 2.0 dengan Mubarokah ID SSO.
+ *
+ * @example Quick Start
+ * ```typescript
+ * import { MubarokahClient } from 'mubarokah-id-sdk';
+ *
+ * const client = new MubarokahClient({
+ *   clientId: process.env.MUBAROKAH_CLIENT_ID!,
+ *   clientSecret: process.env.MUBAROKAH_CLIENT_SECRET!,
+ *   redirectUri: 'http://localhost:3090/auth/callback',
+ * });
+ *
+ * // Generate authorization URL
+ * const { url, state } = client.auth.getAuthorizationUrl();
+ *
+ * // Exchange code → tokens
+ * const tokens = await client.auth.exchangeCode({ code: '...' });
+ *
+ * // Fetch user info
+ * const user = await client.users.getUser(tokens.access_token);
+ * ```
  *
  * @packageDocumentation
  */
 
-// Core client
-export { MubarokahAuth } from './client';
+// — Main Client ——————————————————————————————————————
+export { MubarokahClient } from './client.js';
 
-// React integration
-export { MubarokahProvider, useMubarokahAuth } from './provider';
+// — Sub-Modules ——————————————————————————————————————
+export { OAuthManager } from './oauth.js';
+export { UserManager } from './users.js';
 
-// PKCE utilities (exposed for advanced use-cases)
+// — Error Classes ————————————————————————————————————
 export {
-  generateRandomString,
-  generateCodeChallenge,
-  sha256,
-  base64UrlEncode,
-} from './pkce';
-
-// Types
-export type {
-  MubarokahAuthConfig,
-  TokenResponse,
-  StoredTokenData,
-  MubarokahUser,
-  MubarokahUserDetails,
-  AuthState,
+  MubarokahError,
   OAuthError,
-} from './types';
+  ApiError,
+  ConfigError,
+} from './errors.js';
+
+// — Token Store ——————————————————————————————————————
+export { MemoryTokenStore } from './token-store.js';
+
+// — PKCE Utilities ———————————————————————————————————
+export {
+  generateCodeVerifier,
+  generateCodeChallenge,
+  generatePKCEPair,
+  generateState,
+} from './pkce.js';
+export type { PKCEPair } from './pkce.js';
+
+// — Express Middleware ———————————————————————————————
+export { createCallbackHandler } from './middleware.js';
+
+// — Types ————————————————————————————————————————————
+export type {
+  MubarokahConfig,
+  ResolvedConfig,
+  TokenResponse,
+  StoredTokens,
+  UserInfo,
+  UserDetails,
+  AuthorizationUrlOptions,
+  AuthorizationUrlResult,
+  ExchangeCodeOptions,
+  OAuthErrorResponse,
+  TokenStore,
+  CallbackMiddlewareOptions,
+} from './types.js';
+
+// — Enums & Constants ————————————————————————————————
+export { GrantType, Scope, Prompt, DEFAULTS } from './types.js';
