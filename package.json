@@ -1,6 +1,6 @@
 {
   "name": "mubarokah-id-sdk",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "TypeScript SDK for Mubarokah ID SSO - OAuth 2.0 integration made easy",
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -42,6 +42,17 @@
   ],
   "author": "Mubarokah",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/abdillahmubarok/sdk-mubarokah-id.git"
+  },
+  "bugs": {
+    "url": "https://github.com/abdillahmubarok/sdk-mubarokah-id/issues"
+  },
+  "homepage": "https://github.com/abdillahmubarok/sdk-mubarokah-id#readme",
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=18.0.0"
   },
