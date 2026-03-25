@@ -1,28 +1,30 @@
 # Mubarokah ID SDK
 
-TypeScript SDK untuk integrasi OAuth 2.0 dengan **Mubarokah ID** SSO (Single Sign-On). Mempermudah developer mengintegrasikan aplikasi mereka dengan sistem autentikasi Mubarokah ID yang berbasis Laravel Passport.
+TypeScript SDK for OAuth 2.0 integration with **Mubarokah ID** SSO (Single Sign-On). Simplifies the integration of modern applications with the Mubarokah ID authentication system powered by Laravel Passport.
 
+[![NPM Version](https://img.shields.io/npm/v/mubarokah-id-sdk.svg)](https://www.npmjs.com/package/mubarokah-id-sdk)
+[![NPM Downloads](https://img.shields.io/npm/dt/mubarokah-id-sdk.svg)](https://www.npmjs.com/package/mubarokah-id-sdk)
 [![Node.js](https://img.shields.io/badge/Node.js-%3E%3D18.0.0-green)](https://nodejs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue)](https://www.typescriptlang.org/)
-[![License](https://img.shields.io/badge/License-MIT-yellow)](./LICENSE)
+[![License](https://img.shields.io/badge/License-MIT-yellow)](https://github.com/abdillahmubarok/sdk-mubarokah-id/blob/main/LICENSE)
 
-## ✨ Fitur
+## ✨ Features
 
-- 🔐 **OAuth 2.0 Lengkap** — Authorization Code Grant, Refresh Token, Client Credentials
-- 🛡️ **PKCE Support** — Proof Key for Code Exchange untuk public clients
-- 📦 **Zero Dependencies** — Menggunakan native `fetch` (Node.js 18+)
-- 🔄 **Dual Output** — CommonJS + ESM untuk kompatibilitas maksimal
-- 📝 **Full TypeScript** — Type-safe dengan declarations lengkap
-- 🚀 **Express.js Middleware** — Callback handler siap pakai
-- ⚡ **Token Management** — Interface token store yang extensible
-- 🌐 **Error Handling** — Error classes dengan pesan user-friendly (Bahasa Indonesia)
+- 🔐 **Complete OAuth 2.0** — Authorization Code Grant, Refresh Token, Client Credentials
+- 🛡️ **PKCE Support** — Proof Key for Code Exchange for public clients
+- 📦 **Zero Dependencies** — Uses native `fetch` (Node.js 18+)
+- 🔄 **Dual Output** — CommonJS + ESM for maximum compatibility
+- 📝 **Full TypeScript** — Type-safe with complete declarations
+- 🚀 **Express.js Middleware** — Ready-to-use callback handler
+- ⚡ **Token Management** — Extensible token store interface
+- 🌐 **Error Handling** — Error classes with user-friendly messages
 
-## 📋 Persyaratan
+## 📋 Requirements
 
 - **Node.js** >= 18.0.0
-- **Akun Mubarokah ID** dengan Client ID dan Client Secret
+- **Mubarokah ID Account** with Client ID and Client Secret
 
-## 🚀 Instalasi
+## 🚀 Installation
 
 ```bash
 npm install mubarokah-id-sdk
@@ -30,7 +32,7 @@ npm install mubarokah-id-sdk
 
 ## ⚡ Quick Start
 
-### 1. Inisialisasi Client
+### 1. Initialize Client
 
 ```typescript
 import { MubarokahClient } from 'mubarokah-id-sdk';
@@ -49,17 +51,17 @@ const { url, state } = client.auth.getAuthorizationUrl({
   scopes: ['view-user'],
 });
 
-// Simpan state di session untuk validasi CSRF
+// Save state in session for CSRF validation
 req.session.oauthState = state;
 
-// Redirect user ke Mubarokah ID
+// Redirect user to Mubarokah ID
 res.redirect(url);
 ```
 
 ### 3. Handle Callback & Exchange Code
 
 ```typescript
-// Di callback route
+// In callback route
 const tokens = await client.auth.exchangeCode({
   code: req.query.code as string,
 });
@@ -68,42 +70,42 @@ console.log(tokens.access_token);
 console.log(tokens.refresh_token);
 ```
 
-### 4. Ambil Data User
+### 4. Fetch User Data
 
 ```typescript
 const user = await client.users.getUser(tokens.access_token);
-console.log(`Halo, ${user.name}!`);
+console.log(`Hello, ${user.name}!`);
 // { id, name, email, username, profile_picture, gender }
 ```
 
 ---
 
-## 📖 Panduan Lengkap
+## 📖 Complete Guide
 
-### Konfigurasi
+### Configuration
 
 ```typescript
 const client = new MubarokahClient({
-  // Wajib
+  // Required
   clientId: 'your-client-id',
   clientSecret: 'your-client-secret',
   redirectUri: 'https://yourapp.com/auth/callback',
 
-  // Opsional
+  // Optional
   baseUrl: 'https://accounts.mubarokah.com', // Default
   scopes: ['view-user'],                      // Default
-  timeout: 30000,                              // Default: 30 detik
+  timeout: 30000,                              // Default: 30 seconds
 });
 ```
 
-| Parameter      | Tipe       | Wajib | Default                            | Deskripsi                           |
-| -------------- | ---------- | ----- | ---------------------------------- | ----------------------------------- |
-| `clientId`     | `string`   | ✅     | —                                  | Client ID aplikasi Anda             |
-| `clientSecret` | `string`   | ✅     | —                                  | Client Secret (simpan di server!)   |
-| `redirectUri`  | `string`   | ✅     | —                                  | URL callback yang terdaftar         |
-| `baseUrl`      | `string`   | ❌     | `https://accounts.mubarokah.com`   | Base URL server Mubarokah ID        |
-| `scopes`       | `string[]` | ❌     | `['view-user']`                    | Scopes default                      |
-| `timeout`      | `number`   | ❌     | `30000`                            | Timeout HTTP request (ms)           |
+| Parameter      | Type       | Required | Default                            | Description                           |
+| -------------- | ---------- | -------- | ---------------------------------- | ------------------------------------- |
+| `clientId`     | `string`   | ✅     | —                                  | Your application's Client ID          |
+| `clientSecret` | `string`   | ✅     | —                                  | Client Secret (keep safe on server!)  |
+| `redirectUri`  | `string`   | ✅     | —                                  | Registered callback URL               |
+| `baseUrl`      | `string`   | ❌     | `https://accounts.mubarokah.com`   | Base URL of Mubarokah ID server       |
+| `scopes`       | `string[]` | ❌     | `['view-user']`                    | Default scopes                        |
+| `timeout`      | `number`   | ❌     | `30000`                            | HTTP request timeout (ms)             |
 
 ---
 
@@ -111,10 +113,10 @@ const client = new MubarokahClient({
 
 #### Authorization Code Grant (Recommended)
 
-Flow paling umum untuk aplikasi web server-side:
+Most common flow for server-side web applications:
 
 ```typescript
-// Step 1: Redirect user ke Mubarokah ID
+// Step 1: Redirect user to Mubarokah ID
 app.get('/auth/login', (req, res) => {
   const { url, state } = client.auth.getAuthorizationUrl({
     scopes: ['view-user', 'detail-user'],
@@ -126,7 +128,7 @@ app.get('/auth/login', (req, res) => {
 
 // Step 2: Handle callback
 app.get('/auth/callback', async (req, res) => {
-  // Validasi state (CSRF protection)
+  // Validate state (CSRF protection)
   if (req.query.state !== req.session.oauthState) {
     return res.status(403).send('Invalid state');
   }
@@ -136,7 +138,7 @@ app.get('/auth/callback', async (req, res) => {
     code: req.query.code as string,
   });
 
-  // Ambil user data
+  // Fetch user data
   const user = await client.users.getUser(tokens.access_token);
 
   req.session.user = user;
@@ -147,20 +149,20 @@ app.get('/auth/callback', async (req, res) => {
 
 #### Authorization Code + PKCE
 
-Untuk public clients (SPA, mobile app):
+For public clients (SPA, mobile app):
 
 ```typescript
 import { MubarokahClient } from 'mubarokah-id-sdk';
 
-// Generate URL dengan PKCE
+// Generate URL with PKCE
 const { url, state, codeVerifier } = client.auth.getAuthorizationUrl({
   usePKCE: true,
 });
 
-// Simpan codeVerifier di session
+// Save codeVerifier in session
 req.session.codeVerifier = codeVerifier;
 
-// Saat callback, sertakan codeVerifier
+// Include codeVerifier during callback
 const tokens = await client.auth.exchangeCode({
   code: req.query.code as string,
   codeVerifier: req.session.codeVerifier,
@@ -177,7 +179,7 @@ try {
   // Update stored tokens
 } catch (error) {
   if (error instanceof OAuthError && error.requiresReauth()) {
-    // Redirect user untuk login ulang
+    // Redirect user to re-login
     res.redirect('/auth/login');
   }
 }
@@ -187,7 +189,7 @@ try {
 
 ```typescript
 const { access_token } = await client.auth.clientCredentials('server-operations');
-// Gunakan untuk operasi server-to-server
+// Use for server-to-server operations
 ```
 
 ---
@@ -204,18 +206,18 @@ const user = await client.users.getUser(accessToken);
 
 #### Detail Info (`detail-user` scope)
 
-> ⚠️ Memerlukan approval admin untuk aplikasi Anda.
+> ⚠️ Requires admin approval for your application.
 
 ```typescript
 import { ApiError } from 'mubarokah-id-sdk';
 
 try {
   const details = await client.users.getUserDetails(accessToken);
-  // Tambahan: details.phone, details.date_of_birth,
+  // Additional fields: details.phone, details.date_of_birth,
   // details.place_of_birth, details.address, details.bio
 } catch (error) {
   if (error instanceof ApiError && error.isForbidden()) {
-    console.log('Perlu approval admin untuk scope detail-user');
+    console.log('Admin approval is required for the detail-user scope');
   }
 }
 ```
@@ -224,7 +226,7 @@ try {
 
 ### Express.js Middleware
 
-SDK menyediakan callback handler siap pakai untuk Express:
+The SDK provides a ready-to-use callback handler for Express:
 
 ```typescript
 import express from 'express';
@@ -252,7 +254,7 @@ app.get('/auth/callback', createCallbackHandler(client, {
 
 ### Error Handling
 
-SDK menyediakan error classes yang terstruktur:
+The SDK provides structured error classes:
 
 ```typescript
 import {
@@ -266,18 +268,18 @@ try {
   const tokens = await client.auth.exchangeCode({ code: '...' });
 } catch (error) {
   if (error instanceof OAuthError) {
-    console.log(error.code);                  // 'invalid_grant'
-    console.log(error.message);               // Deskripsi dari server
-    console.log(error.hint);                  // Petunjuk perbaikan
-    console.log(error.getUserFriendlyMessage()); // Pesan Bahasa Indonesia
+    console.log(error.code);                  // e.g. 'invalid_grant'
+    console.log(error.message);               // Description from the server
+    console.log(error.hint);                  // Fix hint
+    console.log(error.getUserFriendlyMessage()); // User friendly message
     console.log(error.isRetryable());         // false
     console.log(error.requiresReauth());      // true
   }
 
   if (error instanceof ApiError) {
-    console.log(error.statusCode);    // 401, 403, dll
+    console.log(error.statusCode);       // 401, 403, etc.
     console.log(error.isUnauthorized()); // Token expired?
-    console.log(error.isForbidden());   // Scope belum di-approve?
+    console.log(error.isForbidden());    // Scope not approved?
   }
 }
 ```
@@ -286,12 +288,12 @@ try {
 
 ### Token Storage
 
-SDK menyediakan interface `TokenStore` yang bisa di-extend:
+The SDK provides an extensible `TokenStore` interface:
 
 ```typescript
 import { TokenStore, StoredTokens, MemoryTokenStore } from 'mubarokah-id-sdk';
 
-// Default: In-Memory (untuk development)
+// Default: In-Memory (for development)
 const memoryStore = new MemoryTokenStore();
 
 // Custom: Redis
@@ -317,22 +319,22 @@ import {
 // Generate PKCE pair
 const { codeVerifier, codeChallenge } = generatePKCEPair();
 
-// Atau generate terpisah
+// Or generate separately
 const verifier = generateCodeVerifier(64);
 const challenge = generateCodeChallenge(verifier);
 
-// Generate state untuk CSRF protection
+// Generate state for CSRF protection
 const state = generateState(40);
 ```
 
 ---
 
-### Scopes yang Tersedia
+### Available Scopes
 
-| Scope         | Data yang Diakses                                                    | Approval           |
-| ------------- | -------------------------------------------------------------------- | ------------------- |
-| `view-user`   | ID, Name, Email, Username, Profile Picture, Gender                   | Otomatis            |
-| `detail-user` | Semua data `view-user` + Phone, Tanggal Lahir, Alamat, Biografi      | Perlu Admin Review  |
+| Scope         | Data Accessed                                                        | Approval             |
+| ------------- | -------------------------------------------------------------------- | -------------------- |
+| `view-user`   | ID, Name, Email, Username, Profile Picture, Gender                   | Automatic            |
+| `detail-user` | All data from `view-user` + Phone, Date of Birth, Address, Biography | Requires Admin Review|
 
 ```typescript
 import { Scope } from 'mubarokah-id-sdk';
@@ -344,34 +346,34 @@ const { url } = client.auth.getAuthorizationUrl({
 
 ---
 
-## 🧪 Menjalankan Contoh Aplikasi
+## 🧪 Running the Example Application
 
-1. **Clone dan install dependencies:**
+1. **Clone and install dependencies:**
 
 ```bash
 cd sdk-mubarokah-id
 npm install
 ```
 
-2. **Konfigurasi environment:**
+2. **Configure the environment:**
 
 ```bash
 cp .env.example .env
-# Edit .env dengan Client ID dan Client Secret Anda
+# Edit .env with your Client ID and Client Secret
 ```
 
-3. **Jalankan aplikasi demo:**
+3. **Run the demo application:**
 
 ```bash
 npm run example
 ```
 
-4. **Buka browser:** [http://localhost:3090](http://localhost:3090)
+4. **Open browser:** [http://localhost:3090](http://localhost:3090)
 
-Aplikasi demo menyediakan:
-- 🔐 Login dengan Mubarokah ID (Authorization Code + opsional PKCE)
-- 👤 Dashboard profil user
-- 📋 Detail user (jika scope `detail-user` disetujui admin)
+The demo application provides:
+- 🔐 Login with Mubarokah ID (Authorization Code + optional PKCE)
+- 👤 User profile dashboard
+- 📋 User details (if the `detail-user` scope is approved by an admin)
 - 🔄 Token refresh
 - 🚪 Logout
 
@@ -392,9 +394,9 @@ npm run dev
 
 ---
 
-## 📁 Struktur Projek
+## 📁 Project Structure
 
-```
+```text
 sdk-mubarokah-id/
 ├── src/
 │   ├── index.ts          # Public API exports
@@ -421,16 +423,16 @@ sdk-mubarokah-id/
 
 ## 🔒 Security Best Practices
 
-1. **JANGAN** simpan `clientSecret` di client-side code (browser/mobile)
-2. **SELALU** gunakan HTTPS di production
-3. **SELALU** validasi `state` parameter untuk mencegah CSRF
-4. **GUNAKAN** PKCE untuk public clients (SPA, mobile apps)
-5. **SIMPAN** credentials di environment variables
-6. **IMPLEMENTASIKAN** token refresh logic untuk UX yang seamless
-7. **MONITOR** penggunaan token untuk aktivitas mencurigakan
+1. **DO NOT** store `clientSecret` in client-side code (browser/mobile)
+2. **ALWAYS** use HTTPS in production
+3. **ALWAYS** validate the `state` parameter to prevent CSRF
+4. **USE** PKCE for public clients (SPAs, mobile apps)
+5. **STORE** credentials in environment variables
+6. **IMPLEMENT** token refresh logic for a seamless UX
+7. **MONITOR** token usage for suspicious activity
 
 ---
 
 ## 📄 License
 
-MIT License — Lihat file [LICENSE](./LICENSE) untuk detail.
+MIT License — See the [LICENSE](./LICENSE) file for details.
