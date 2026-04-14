@@ -11,6 +11,7 @@ TypeScript SDK for OAuth 2.0 integration with **Mubarokah ID** SSO (Single Sign-
 ## ✨ Features
 
 - 🔐 **Complete OAuth 2.0** — Authorization Code Grant, Refresh Token, Client Credentials
+- ⚛️ **Native React Support** — Context Provider & Hooks for SPA (`mubarokah-id-sdk/react`)
 - 🛡️ **PKCE Support** — Proof Key for Code Exchange for public clients
 - 📦 **Zero Dependencies** — Uses native `fetch` (Node.js 18+)
 - 🔄 **Dual Output** — CommonJS + ESM for maximum compatibility
@@ -101,7 +102,7 @@ const client = new MubarokahClient({
 | Parameter      | Type       | Required | Default                            | Description                           |
 | -------------- | ---------- | -------- | ---------------------------------- | ------------------------------------- |
 | `clientId`     | `string`   | ✅     | —                                  | Your application's Client ID          |
-| `clientSecret` | `string`   | ✅     | —                                  | Client Secret (keep safe on server!)  |
+| `clientSecret` | `string`   | ❌ (Yes for server)| —                          | Required for server apps, **optional** for React/SPA |
 | `redirectUri`  | `string`   | ✅     | —                                  | Registered callback URL               |
 | `baseUrl`      | `string`   | ❌     | `https://accounts.mubarokah.com`   | Base URL of Mubarokah ID server       |
 | `scopes`       | `string[]` | ❌     | `['view-user']`                    | Default scopes                        |
@@ -249,6 +250,51 @@ app.get('/auth/callback', createCallbackHandler(client, {
   getState: (req) => (req as any).session?.oauthState,
 }));
 ```
+
+---
+
+### React/SPA Integration
+
+The SDK provides a native React Context and Hooks designed for Single Page Applications (SPA). It automatically handles the PKCE flow securely completely from the browser:
+
+```tsx
+// 1. Wrap your root app with MubarokahProvider
+import { MubarokahProvider } from 'mubarokah-id-sdk/react';
+
+function App() {
+  return (
+    <MubarokahProvider config={{
+      clientId: 'your-client-id',
+      // clientSecret is OPTIONAL for React (omitted for security)
+      redirectUri: 'http://localhost:3000/callback'
+    }}>
+      <YourAppComponents />
+    </MubarokahProvider>
+  );
+}
+
+// 2. Use the Hooks anywhere in your components
+import { useMubarokahAuth } from 'mubarokah-id-sdk/react';
+
+function AuthButton() {
+  const { isAuthenticated, user, isLoading, loginWithRedirect, logout } = useMubarokahAuth();
+
+  if (isLoading) return <span>Loading...</span>;
+
+  if (isAuthenticated) {
+    return (
+      <div>
+        <p>Welcome, {user?.name}</p>
+        <button onClick={() => logout()}>Logout</button>
+      </div>
+    );
+  }
+
+  return <button onClick={() => loginWithRedirect()}>Login with Mubarokah ID</button>;
+}
+```
+
+> **⚠️ SINGLE SIGN-OUT WARNING:** Calling `logout()` via the React Hook (or `client.auth.logout()`) will not only clear your local React state but also **terminate the user's main SSO session on the Mubarokah ID central server**. It is highly recommended to show a confirmation dialog to your users indicating that they will be logged out from all Mubarokah ID affiliated apps concurrently.
 
 ---
 
@@ -407,7 +453,8 @@ sdk-mubarokah-id/
 │   ├── errors.ts         # Custom error classes
 │   ├── pkce.ts           # PKCE utilities
 │   ├── token-store.ts    # Token storage interface
-│   └── middleware.ts     # Express middleware
+│   ├── middleware.ts     # Express middleware
+│   └── react/            # Native React implementation (Context & Hooks)
 ├── examples/
 │   └── express-app/
 │       └── server.ts     # Demo application

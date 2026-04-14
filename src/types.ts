@@ -18,8 +18,11 @@ export interface MubarokahConfig {
   /** Client ID dari aplikasi yang terdaftar di Mubarokah ID */
   clientId: string;
 
-  /** Client Secret dari aplikasi (simpan di server-side, JANGAN di client-side) */
-  clientSecret: string;
+  /** 
+   * Client Secret dari aplikasi (simpan di server-side, JANGAN di client-side).
+   * Opsional jika menggunakan implicit flow atau PKCE public client di browser (React/SPA).
+   */
+  clientSecret?: string;
 
   /** URL callback yang terdaftar di Mubarokah ID */
   redirectUri: string;
@@ -46,7 +49,7 @@ export interface MubarokahConfig {
 /** Konfigurasi internal dengan semua field yang sudah di-resolve */
 export interface ResolvedConfig {
   clientId: string;
-  clientSecret: string;
+  clientSecret?: string;
   redirectUri: string;
   baseUrl: string;
   scopes: string[];

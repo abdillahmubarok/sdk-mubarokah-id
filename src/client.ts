@@ -83,8 +83,8 @@ export class MubarokahClient {
       throw new ConfigError('clientId wajib diisi dan harus berupa string.');
     }
 
-    if (!config.clientSecret || typeof config.clientSecret !== 'string') {
-      throw new ConfigError('clientSecret wajib diisi dan harus berupa string.');
+    if (config.clientSecret !== undefined && typeof config.clientSecret !== 'string') {
+      throw new ConfigError('clientSecret jika diisi harus berupa string.');
     }
 
     if (!config.redirectUri || typeof config.redirectUri !== 'string') {

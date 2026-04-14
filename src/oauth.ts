@@ -155,8 +155,11 @@ export class OAuthManager {
       code: options.code,
       redirect_uri: options.redirectUri ?? this.config.redirectUri,
       client_id: this.config.clientId,
-      client_secret: this.config.clientSecret,
     });
+
+    if (this.config.clientSecret) {
+      body.set('client_secret', this.config.clientSecret);
+    }
 
     if (options.codeVerifier) {
       body.set('code_verifier', options.codeVerifier);
@@ -200,8 +203,11 @@ export class OAuthManager {
       grant_type: 'refresh_token',
       refresh_token: refreshToken,
       client_id: this.config.clientId,
-      client_secret: this.config.clientSecret,
     });
+
+    if (this.config.clientSecret) {
+      body.set('client_secret', this.config.clientSecret);
+    }
 
     if (scope) {
       body.set('scope', scope);
@@ -234,14 +240,69 @@ export class OAuthManager {
     const body = new URLSearchParams({
       grant_type: 'client_credentials',
       client_id: this.config.clientId,
-      client_secret: this.config.clientSecret,
     });
+
+    if (this.config.clientSecret) {
+      body.set('client_secret', this.config.clientSecret);
+    }
 
     if (scope) {
       body.set('scope', scope);
     }
 
     return this.requestToken(body);
+  }
+
+  // ==========================================================================
+  // Single Sign-Out (Logout)
+  // ==========================================================================
+
+  /**
+   * Logout user dari sesi SSO Mubarokah ID.
+   * 
+   * Endpoint ini akan mencabut (revoke) access token yang sedang aktif dan juga
+   * membersihkan sesi login user di sistem Mubarokah ID, sehingga user akan
+   * ter-logout secara menyeluruh dari seluruh aplikasi yang terhubung.
+   * 
+   * ⚠️ PEMBERITAHUAN PENTING UNTUK PENGEMBANG:
+   * API ini akan membuat pengguna dari App Client Anda "Logout" dari App Client nya juga Mubarokah ID.
+   * Pertimbangkan untuk memberikan Saran/Notifikasi terbaik terhadap pengguna agar
+   * mereka mengetahui bahwa tindakan ini akan mengeluarkan mereka dari seluruh ekosistem SSO.
+   *
+   * @param accessToken - Access token yang valid dari sesi saat ini
+   * @throws {OAuthError} Jika token tidak valid atau request gagal
+   * 
+   * @example
+   * ```typescript
+   * await client.auth.logout(accessToken);
+   * // Kemudian bersihkan sesi di aplikasi lokal Anda
+   * req.session.destroy();
+   * res.redirect('/');
+   * ```
+   */
+  async logout(accessToken: string): Promise<void> {
+    const url = `${this.config.baseUrl}/api/logout-sso`;
+
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/json',
+      },
+      signal: AbortSignal.timeout(this.config.timeout),
+    });
+
+    if (!response.ok) {
+      let body: unknown;
+      try {
+        body = await response.json();
+      } catch {
+        body = await response.text();
+      }
+
+      const data = typeof body === 'object' && body !== null ? body : { error: String(body) };
+      throw new OAuthError(data as OAuthErrorResponse, response.status);
+    }
   }
 
   // ==========================================================================
