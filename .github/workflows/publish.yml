@@ -3,30 +3,60 @@ name: Publish to NPM
 on:
   push:
     tags:
-      - 'v1.0.5' # Trigger workflow on tags like v1.0.0, v2.1.3, dll.
+      - 'v*.*.*'          # v1.2.3, v2.0.0, v2.0.0-beta.1, dll.
 
 jobs:
+  # 1) Test matrix — gagal fast sebelum publish
+  test:
+    name: Test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        node: ['18.x', '20.x']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  # 2) Verifikasi tag sama dengan package.json lalu publish
   publish:
+    name: Publish to NPM
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write   # Wajib untuk npm provenance
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: '18.x'
+          node-version: '20.x'
           registry-url: 'https://registry.npmjs.org'
+          cache: 'npm'
 
-      - name: Install Dependencies
-        run: npm ci
+      - name: Verify tag matches package.json version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION="$(node -p "require('./package.json').version")"
+          echo "Tag:     $TAG_VERSION"
+          echo "Package: $PKG_VERSION"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag ($TAG_VERSION) tidak cocok dengan package.json ($PKG_VERSION)"
+            exit 1
+          fi
 
-      - name: Build Code
-        run: npm run build
+      - run: npm ci
+      - run: npm run build
 
-      - name: Publish Package to NPM
-        run: npm publish
+      - name: Publish to NPM (with provenance)
+        run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

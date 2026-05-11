@@ -18,9 +18,12 @@ export interface MubarokahConfig {
   /** Client ID dari aplikasi yang terdaftar di Mubarokah ID */
   clientId: string;
 
-  /** 
-   * Client Secret dari aplikasi (simpan di server-side, JANGAN di client-side).
-   * Opsional jika menggunakan implicit flow atau PKCE public client di browser (React/SPA).
+  /**
+   * Client Secret dari aplikasi.
+   *
+   * ⚠️ **Keamanan:** `client_secret` HARUS disimpan di server-side saja.
+   * Jangan pernah memasukkannya ke bundle React / SPA / mobile app.
+   * Untuk public client (browser/mobile), gunakan PKCE tanpa `clientSecret`.
    */
   clientSecret?: string;
 
@@ -84,7 +87,7 @@ export interface TokenResponse {
   /** Access token untuk mengakses protected resources */
   access_token: string;
 
-  /** Refresh token untuk mendapatkan access token baru (opsional, tidak ada di client_credentials) */
+  /** Refresh token untuk mendapatkan access token baru (tidak ada pada client_credentials grant) */
   refresh_token?: string;
 
   /** Scopes yang diberikan */
@@ -92,14 +95,29 @@ export interface TokenResponse {
 }
 
 /**
- * Data token yang disimpan, termasuk waktu expired.
+ * Data token yang disimpan, termasuk waktu expired dalam epoch millisecond.
  */
 export interface StoredTokens {
   accessToken: string;
   refreshToken?: string;
+  /** Epoch ms saat access token akan expired */
   expiresAt: number;
   tokenType: string;
   scope?: string;
+}
+
+/**
+ * Handle token ringkas yang dipakai oleh `OAuthManager.withAutoRefresh()`.
+ *
+ * Sama seperti `StoredTokens` tetapi tanpa field metadata yang tidak dipakai
+ * untuk keputusan refresh (`tokenType`, `scope`) sehingga konsumer bisa
+ * dengan mudah menyusunnya dari `TokenResponse`.
+ */
+export interface AutoRefreshHandle {
+  accessToken: string;
+  refreshToken?: string;
+  /** Epoch ms saat access token akan expired */
+  expiresAt: number;
 }
 
 // ============================================================================
@@ -107,40 +125,75 @@ export interface StoredTokens {
 // ============================================================================
 
 /**
- * Informasi dasar user dari endpoint `/api/user`.
+ * Informasi dasar user dari endpoint `GET /api/user`.
+ *
  * Membutuhkan scope `view-user`.
+ *
+ * ### Catatan WhatsApp Registration
+ *
+ * User yang mendaftar via WhatsApp mungkin **tidak memiliki email**.
+ * Dalam kasus tersebut `email` akan bernilai `null`. Aplikasi Anda WAJIB
+ * menangani kondisi ini dan tidak boleh mengasumsikan email selalu ada.
+ *
+ * **Best practice:**
+ * - Gunakan `id` sebagai primary key lokal, BUKAN `email`.
+ * - Jika butuh email, tampilkan prompt "Lengkapi profil" ke user
+ *   atau generate synthetic email (`${id}@sso.mubarokah.local`).
+ *
+ * @see https://docs-accounts.mubarokah.com — WhatsApp Authentication Flow
  */
 export interface UserInfo {
-  /** ID unik user di Mubarokah ID */
-  id: string | number;
+  /** ID unik user di Mubarokah ID (numerik). Gunakan ini sebagai primary key. */
+  id: number;
 
-  /** Nama lengkap user */
+  /** Nama lengkap user (selalu ada) */
   name: string;
 
-  /** Alamat email user */
-  email: string;
+  /**
+   * Alamat email user.
+   *
+   * ⚠️ Bernilai `null` untuk user yang mendaftar via WhatsApp dan belum
+   * menautkan email.
+   */
+  email: string | null;
 
-  /** Username unik user */
-  username: string;
+  /**
+   * Username unik user.
+   *
+   * Bisa bernilai `null` jika user belum memilih username.
+   */
+  username: string | null;
 
-  /** URL foto profil user */
+  /** URL foto profil user. `null` jika user belum upload avatar. */
   profile_picture: string | null;
 
-  /** Jenis kelamin user */
+  /** Jenis kelamin user ("male", "female", "other"). `null` jika tidak diisi. */
   gender: string | null;
 }
 
 /**
- * Informasi detail user dari endpoint `/api/user/details`.
- * Membutuhkan scope `detail-user` dan approval admin.
+ * Informasi detail user dari endpoint `GET /api/user/details`.
  *
- * Termasuk semua field dari `UserInfo` ditambah informasi sensitif.
+ * Membutuhkan:
+ * - Scope `detail-user`
+ * - **Approval admin Mubarokah ID** untuk aplikasi client Anda
+ *
+ * Termasuk semua field dari `UserInfo` ditambah informasi sensitif berikut.
+ *
+ * ⚠️ Semua field tambahan bisa bernilai `null` jika user belum melengkapinya.
+ *
+ * @see https://docs-accounts.mubarokah.com — Get Detailed User Information
  */
 export interface UserDetails extends UserInfo {
-  /** Nomor telepon user */
-  phone: string | null;
+  /**
+   * Nomor telepon user (terverifikasi via OTP WhatsApp).
+   *
+   * Ini adalah identifier utama untuk user WhatsApp-registered.
+   * Field name sesuai response server: `phone_number` (bukan `phone`).
+   */
+  phone_number: string | null;
 
-  /** Tanggal lahir user */
+  /** Tanggal lahir user (format YYYY-MM-DD) */
   date_of_birth: string | null;
 
   /** Tempat lahir user */
@@ -151,6 +204,33 @@ export interface UserDetails extends UserInfo {
 
   /** Biografi / tentang user */
   bio: string | null;
+}
+
+/**
+ * Type guard: cek apakah user adalah hasil registrasi WhatsApp (tanpa email).
+ *
+ * @example
+ * ```typescript
+ * if (isWhatsAppUser(user)) {
+ *   // user.email adalah null di sini
+ *   showEmailLinkingPrompt();
+ * } else {
+ *   // TypeScript tahu user.email adalah string
+ *   sendEmail(user.email);
+ * }
+ * ```
+ */
+export function isWhatsAppUser(user: UserInfo): user is UserInfo & { email: null } {
+  return user.email === null;
+}
+
+/**
+ * Type guard: cek apakah user memiliki email (bukan WhatsApp-only).
+ *
+ * Mem-persempit tipe sehingga `user.email` terjamin `string`.
+ */
+export function hasEmail(user: UserInfo): user is UserInfo & { email: string } {
+  return typeof user.email === 'string' && user.email.length > 0;
 }
 
 // ============================================================================
@@ -278,7 +358,16 @@ export interface TokenStore {
 // ============================================================================
 
 /**
- * Opsi untuk Express callback middleware.
+ * Opsi untuk OAuth callback middleware (Express & kompatibel).
+ *
+ * Middleware ini melakukan:
+ * 1. Deteksi `error` pada query → forward ke `onError`.
+ * 2. Validasi `state` CSRF via `getState` (WAJIB).
+ * 3. Ambil `code_verifier` via `getCodeVerifier` (opsional, untuk PKCE).
+ * 4. Panggil `clearStoredValues` untuk mencegah replay.
+ * 5. Exchange code → tokens.
+ * 6. (Opsional) Fetch user info.
+ * 7. Forward ke `onSuccess`.
  */
 export interface CallbackMiddlewareOptions {
   /**
@@ -289,17 +378,13 @@ export interface CallbackMiddlewareOptions {
   onSuccess: (
     req: unknown,
     res: unknown,
-    data: { tokens: TokenResponse; user?: UserInfo }
+    data: { tokens: TokenResponse; user?: UserInfo },
   ) => void | Promise<void>;
 
   /**
    * Callback ketika OAuth gagal.
    */
-  onError: (
-    req: unknown,
-    res: unknown,
-    error: Error
-  ) => void | Promise<void>;
+  onError: (req: unknown, res: unknown, error: Error) => void | Promise<void>;
 
   /**
    * Otomatis fetch user info setelah token exchange.
@@ -308,9 +393,23 @@ export interface CallbackMiddlewareOptions {
   fetchUser?: boolean;
 
   /**
-   * Fungsi untuk mendapatkan dan memvalidasi state dari session.
+   * **WAJIB.** Ambil state yang disimpan di session untuk validasi CSRF.
+   * Jika tidak diisi, `createCallbackHandler` akan melempar error saat dibuat.
    */
-  getState?: (req: unknown) => string | undefined;
+  getState: (req: unknown) => string | undefined;
+
+  /**
+   * Opsional: ambil code_verifier dari session untuk flow PKCE.
+   * Wajib dipasang jika authorization URL dibuat dengan `usePKCE: true`.
+   */
+  getCodeVerifier?: (req: unknown) => string | undefined;
+
+  /**
+   * Opsional tapi sangat direkomendasikan: hapus state dan code_verifier dari
+   * session setelah divalidasi. Mencegah serangan replay dengan memastikan
+   * authorization code → token exchange hanya bisa dilakukan sekali.
+   */
+  clearStoredValues?: (req: unknown) => void | Promise<void>;
 }
 
 // ============================================================================

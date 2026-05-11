@@ -48,7 +48,7 @@ const client = new MubarokahClient({
 ### 2. Generate Authorization URL
 
 ```typescript
-const { url, state } = client.auth.getAuthorizationUrl({
+const { url, state } = await client.auth.getAuthorizationUrl({
   scopes: ['view-user'],
 });
 
@@ -77,6 +77,8 @@ console.log(tokens.refresh_token);
 const user = await client.users.getUser(tokens.access_token);
 console.log(`Hello, ${user.name}!`);
 // { id, name, email, username, profile_picture, gender }
+// ⚠️ email, username, profile_picture, and gender may be null
+// (e.g. for WhatsApp-registered users that haven't linked an email).
 ```
 
 ---
@@ -118,8 +120,8 @@ Most common flow for server-side web applications:
 
 ```typescript
 // Step 1: Redirect user to Mubarokah ID
-app.get('/auth/login', (req, res) => {
-  const { url, state } = client.auth.getAuthorizationUrl({
+app.get('/auth/login', async (req, res) => {
+  const { url, state } = await client.auth.getAuthorizationUrl({
     scopes: ['view-user', 'detail-user'],
     prompt: 'consent',
   });
@@ -156,7 +158,7 @@ For public clients (SPA, mobile app):
 import { MubarokahClient } from 'mubarokah-id-sdk';
 
 // Generate URL with PKCE
-const { url, state, codeVerifier } = client.auth.getAuthorizationUrl({
+const { url, state, codeVerifier } = await client.auth.getAuthorizationUrl({
   usePKCE: true,
 });
 
@@ -214,11 +216,18 @@ import { ApiError } from 'mubarokah-id-sdk';
 
 try {
   const details = await client.users.getUserDetails(accessToken);
-  // Additional fields: details.phone, details.date_of_birth,
+  // Additional fields: details.phone_number, details.date_of_birth,
   // details.place_of_birth, details.address, details.bio
+  // All additional fields may be null.
 } catch (error) {
-  if (error instanceof ApiError && error.isForbidden()) {
-    console.log('Admin approval is required for the detail-user scope');
+  if (error instanceof ApiError) {
+    if (error.isUnapprovedScope()) {
+      // Your app has no admin approval for detail-user — contact Mubarokah ID.
+    } else if (error.isInsufficientScope()) {
+      // Token was not issued with detail-user — re-run the authorization flow.
+    } else if (error.isTokenExpired()) {
+      // Access token expired — refresh it.
+    }
   }
 }
 ```
@@ -237,17 +246,26 @@ const app = express();
 const client = new MubarokahClient({ ... });
 
 app.get('/auth/callback', createCallbackHandler(client, {
+  // getState is REQUIRED — prevents accidental CSRF bypass
+  getState:        (req) => (req as any).session?.oauthState,
+  // Required if you used usePKCE at login time
+  getCodeVerifier: (req) => (req as any).session?.codeVerifier,
+  // Recommended — prevents replay of the authorization code
+  clearStoredValues: (req) => {
+    const s = (req as any).session;
+    s.oauthState   = undefined;
+    s.codeVerifier = undefined;
+  },
   onSuccess: async (req, res, { tokens, user }) => {
     (req as any).session.tokens = tokens;
-    (req as any).session.user = user;
+    (req as any).session.user   = user;
     (res as any).redirect('/dashboard');
   },
   onError: async (req, res, error) => {
     console.error('OAuth error:', error);
     (res as any).redirect('/login?error=auth_failed');
   },
-  fetchUser: true,   // Auto-fetch user info (default: true)
-  getState: (req) => (req as any).session?.oauthState,
+  fetchUser: true, // default
 }));
 ```
 
@@ -263,11 +281,17 @@ import { MubarokahProvider } from 'mubarokah-id-sdk/react';
 
 function App() {
   return (
-    <MubarokahProvider config={{
-      clientId: 'your-client-id',
-      // clientSecret is OPTIONAL for React (omitted for security)
-      redirectUri: 'http://localhost:3000/callback'
-    }}>
+    <MubarokahProvider
+      config={{
+        clientId: 'your-client-id',
+        // ⚠️ Do NOT pass clientSecret. TypeScript and a runtime guard
+        // will reject it in browser environments.
+        redirectUri: 'http://localhost:3000/callback',
+      }}
+      // Default: 'memory' (most secure — token vanishes on reload).
+      // Use 'sessionStorage' if you need tab-lifetime persistence.
+      persistence="memory"
+    >
       <YourAppComponents />
     </MubarokahProvider>
   );
@@ -277,14 +301,16 @@ function App() {
 import { useMubarokahAuth } from 'mubarokah-id-sdk/react';
 
 function AuthButton() {
-  const { isAuthenticated, user, isLoading, loginWithRedirect, logout } = useMubarokahAuth();
+  const { isAuthenticated, user, isLoading, error, loginWithRedirect, logout } = useMubarokahAuth();
 
   if (isLoading) return <span>Loading...</span>;
+  if (error)     return <span>Auth error: {error.message}</span>;
 
   if (isAuthenticated) {
     return (
       <div>
         <p>Welcome, {user?.name}</p>
+        {!user?.email && <p><em>Link your email to receive notifications.</em></p>}
         <button onClick={() => logout()}>Logout</button>
       </div>
     );
@@ -323,9 +349,12 @@ try {
   }
 
   if (error instanceof ApiError) {
-    console.log(error.statusCode);       // 401, 403, etc.
-    console.log(error.isUnauthorized()); // Token expired?
-    console.log(error.isForbidden());    // Scope not approved?
+    console.log(error.statusCode);            // 401, 403, etc.
+    console.log(error.oauthCode);             // e.g. 'insufficient_scope' | 'unapproved_scope'
+    console.log(error.isUnauthorized());      // token expired / invalid?
+    console.log(error.isInsufficientScope()); // reauth with proper scope
+    console.log(error.isUnapprovedScope());   // needs admin approval
+    console.log(error.isRateLimited());       // 429 — read error.retryAfter
   }
 }
 ```
@@ -362,15 +391,15 @@ import {
   generateState,
 } from 'mubarokah-id-sdk';
 
-// Generate PKCE pair
-const { codeVerifier, codeChallenge } = generatePKCEPair();
+// Generate PKCE pair (async — uses WebCrypto)
+const { codeVerifier, codeChallenge } = await generatePKCEPair();
 
 // Or generate separately
-const verifier = generateCodeVerifier(64);
-const challenge = generateCodeChallenge(verifier);
+const verifier  = generateCodeVerifier();
+const challenge = await generateCodeChallenge(verifier);
 
 // Generate state for CSRF protection
-const state = generateState(40);
+const state = generateState();
 ```
 
 ---
@@ -468,15 +497,86 @@ sdk-mubarokah-id/
 
 ---
 
-## 🔒 Security Best Practices
+## 🔒 Security Best Practices: Public vs Confidential Client
 
-1. **DO NOT** store `clientSecret` in client-side code (browser/mobile)
-2. **ALWAYS** use HTTPS in production
-3. **ALWAYS** validate the `state` parameter to prevent CSRF
-4. **USE** PKCE for public clients (SPAs, mobile apps)
-5. **STORE** credentials in environment variables
-6. **IMPLEMENT** token refresh logic for a seamless UX
-7. **MONITOR** token usage for suspicious activity
+OAuth 2.0 defines two client profiles. Picking the right one determines which
+APIs of this SDK you are allowed to use and how you store tokens.
+
+### Confidential client (your server / backend)
+
+Your server can store `clientSecret` safely — that is the definition.
+
+- Use all of `OAuthManager`: `exchangeCode`, `refreshToken`,
+  `clientCredentials`, `logout`, `withAutoRefresh`.
+- Pass `clientSecret` in the config.
+- Store tokens in a server-side store (Redis, DB, encrypted file) via the
+  `TokenStore` interface.
+- In Express, use `createCallbackHandler` with `getState` + `getCodeVerifier`
+  + `clearStoredValues` wired to your session.
+
+### Public client (SPA, mobile, desktop)
+
+Your runtime cannot keep a secret. Anyone viewing the bundle can read it.
+
+- **Never** set `clientSecret`. The SDK throws a `ConfigError` if you try to
+  perform a token exchange from a browser with `clientSecret` set.
+- **Always** use PKCE (`usePKCE: true` in `getAuthorizationUrl`).
+- **Do not** store refresh tokens in the browser. The React provider does not
+  persist them.
+- Prefer `persistence="memory"` for access tokens. Tokens vanish on reload but
+  XSS cannot exfiltrate what no longer exists.
+
+```tsx
+<MubarokahProvider
+  config={{ clientId: 'your-client-id', redirectUri: 'https://app.example.com/callback' }}
+  persistence="memory"   // 'sessionStorage' is available as opt-in
+>
+  <App />
+</MubarokahProvider>
+```
+
+### Backend-for-Frontend (BFF) — recommended for production SPAs
+
+If reload-survival, refresh-token lifecycle, and XSS hardening all matter,
+do not treat the SPA as a public client. Put a thin backend in front of it:
+
+```
+┌───────────┐    1. /login         ┌─────────────┐      ┌────────────────┐
+│           │ ──────────────────▶  │             │ 2.   │                │
+│  Browser  │    (HttpOnly cookie) │  Your BFF   │ ───▶ │  Mubarokah ID  │
+│           │ ◀──────────────────  │  (Node/PHP) │ ◀─── │                │
+└───────────┘    3. user JSON      └─────────────┘      └────────────────┘
+```
+
+- The BFF runs this SDK as a **confidential client** (holds `clientSecret`).
+- The browser never sees access or refresh tokens. The BFF exchanges cookie
+  for token when proxying user-scoped requests.
+- Set the session cookie `httpOnly: true`, `sameSite: 'lax'`,
+  `secure: true` in production (see `examples/express-app/server.ts`).
+- Your React app stays unchanged: swap `MubarokahProvider` for a plain
+  `fetch('/api/me', { credentials: 'include' })` call.
+
+### ⚠️ Do not put `clientSecret` in a browser
+
+Even if bundled behind env-substitution, obfuscation, or "private" CDN paths:
+the secret is trivially recoverable from any user's DevTools. Rotate it
+immediately if this has ever happened.
+
+---
+
+## 🔐 Other Security Reminders
+
+1. Use HTTPS everywhere in production.
+2. Validate the `state` parameter on every callback (the middleware enforces
+   this with a constant-time comparison).
+3. Treat authorization codes as single-use — clear state and code_verifier
+   **before** exchanging.
+4. Keep the `detail-user` scope only for features that genuinely need it.
+   Admin approval is required; users cannot self-service.
+5. Monitor `ApiError.isRateLimited()` — Mubarokah ID enforces 100 req/min
+   for `/api/user` and 50 req/min for `/api/user/details`.
+6. Inform users before calling `client.auth.logout(token)` — it terminates
+   the **global SSO** session, not just your app.
 
 ---
 

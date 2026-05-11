@@ -8,35 +8,33 @@ import type { OAuthErrorResponse } from './types.js';
  * Error mapping untuk pesan user-friendly (Bahasa Indonesia).
  */
 const USER_FRIENDLY_MESSAGES: Record<string, string> = {
-  invalid_request: 'Permintaan tidak valid. Parameter yang diperlukan tidak lengkap atau salah format.',
-  invalid_client: 'Autentikasi client gagal. Periksa Client ID dan Client Secret Anda.',
-  invalid_grant: 'Kode otorisasi tidak valid, sudah kedaluwarsa, atau sudah digunakan.',
-  unauthorized_client: 'Aplikasi tidak memiliki izin untuk menggunakan grant type ini.',
-  unsupported_grant_type: 'Grant type tidak didukung. Gunakan: authorization_code, refresh_token, atau client_credentials.',
+  invalid_request:
+    'Permintaan tidak valid. Parameter yang diperlukan tidak lengkap atau salah format.',
+  invalid_client:
+    'Autentikasi client gagal. Periksa Client ID dan Client Secret Anda.',
+  invalid_grant:
+    'Kode otorisasi tidak valid, sudah kedaluwarsa, atau sudah digunakan.',
+  unauthorized_client:
+    'Aplikasi tidak memiliki izin untuk menggunakan grant type ini.',
+  unsupported_grant_type:
+    'Grant type tidak didukung. Gunakan: authorization_code, refresh_token, atau client_credentials.',
   invalid_scope: 'Scope yang diminta tidak valid atau tidak dikenali.',
   access_denied: 'Anda menolak permintaan otorisasi dari aplikasi ini.',
-  unapproved_scope: 'Aplikasi Anda memerlukan persetujuan admin untuk mengakses data ini.',
-  insufficient_scope: 'Access token tidak memiliki scope yang diperlukan.',
+  unapproved_scope:
+    'Aplikasi Anda memerlukan persetujuan admin Mubarokah ID untuk mengakses data ini.',
+  insufficient_scope:
+    'Access token tidak memiliki scope yang diperlukan. Lakukan login ulang dengan scope yang benar.',
   token_expired: 'Sesi Anda telah kedaluwarsa. Silakan login kembali.',
+  invalid_token: 'Access token tidak valid. Silakan login kembali.',
+  rate_limit_exceeded:
+    'Terlalu banyak permintaan. Silakan coba lagi beberapa saat lagi.',
 };
 
 /**
  * Base error class untuk semua error dari Mubarokah ID SDK.
- *
- * @example
- * ```typescript
- * try {
- *   await client.auth.exchangeCode({ code: '...' });
- * } catch (error) {
- *   if (error instanceof MubarokahError) {
- *     console.log(error.code);    // 'invalid_grant'
- *     console.log(error.message); // 'The authorization code is invalid...'
- *   }
- * }
- * ```
  */
 export class MubarokahError extends Error {
-  /** Kode error */
+  /** Kode error (oauth error code atau `api_error_<status>` untuk error tanpa kode) */
   public readonly code: string;
 
   /** HTTP status code (jika ada) */
@@ -62,18 +60,6 @@ export class MubarokahError extends Error {
 
 /**
  * Error khusus untuk OAuth flow (authorization, token exchange, refresh).
- *
- * @example
- * ```typescript
- * try {
- *   await client.auth.exchangeCode({ code: 'expired_code' });
- * } catch (error) {
- *   if (error instanceof OAuthError) {
- *     console.log(error.errorDescription); // 'The authorization grant is invalid...'
- *     console.log(error.hint);             // 'Check the authorization code...'
- *   }
- * }
- * ```
  */
 export class OAuthError extends MubarokahError {
   /** Deskripsi error dari server */
@@ -83,7 +69,8 @@ export class OAuthError extends MubarokahError {
   public readonly hint?: string;
 
   constructor(response: OAuthErrorResponse, statusCode?: number) {
-    const message = response.error_description ?? response.message ?? response.error ?? 'OAuth error';
+    const message =
+      response.error_description ?? response.message ?? response.error ?? 'OAuth error';
     super(message, response.error, statusCode);
     this.name = 'OAuthError';
     this.errorDescription = response.error_description;
@@ -91,46 +78,137 @@ export class OAuthError extends MubarokahError {
   }
 
   /**
-   * Periksa apakah error ini bisa di-retry.
+   * Apakah error ini bisa di-retry (misal karena race refresh atau server sibuk).
    */
   isRetryable(): boolean {
     return ['token_expired', 'temporarily_unavailable'].includes(this.code);
   }
 
   /**
-   * Periksa apakah user perlu re-authenticate.
+   * Apakah error ini mengindikasikan bahwa **user** harus login ulang.
+   *
+   * Tidak termasuk `invalid_client` karena itu adalah masalah konfigurasi
+   * developer (credential salah) — re-login user tidak akan menyelesaikannya.
+   * Gunakan {@link OAuthError.isConfigIssue} untuk mendeteksinya.
    */
   requiresReauth(): boolean {
-    return ['invalid_grant', 'invalid_client', 'access_denied'].includes(this.code);
+    return [
+      'invalid_grant',
+      'access_denied',
+      'invalid_token',
+      'token_expired',
+    ].includes(this.code);
+  }
+
+  /**
+   * Apakah error ini mengindikasikan masalah konfigurasi aplikasi (bukan user).
+   *
+   * Contoh: Client ID/Secret salah, grant type tidak diizinkan untuk client,
+   * dll. Developer harus memperbaiki konfigurasi, bukan mengulang flow user.
+   */
+  isConfigIssue(): boolean {
+    return [
+      'invalid_client',
+      'unauthorized_client',
+      'unsupported_grant_type',
+    ].includes(this.code);
   }
 }
 
 /**
- * Error khusus untuk API calls (GET /api/user, dll).
+ * Error khusus untuk panggilan API (endpoint `/api/user`, `/api/user/details`, dll).
+ *
+ * Membawa `oauthCode` bila server mengirim field `error` bergaya OAuth
+ * (mis. `insufficient_scope`, `unapproved_scope`, `token_expired`).
+ * Ini penting untuk membedakan dua kondisi 403 yang memerlukan penanganan
+ * berbeda:
+ *
+ * - `insufficient_scope` → developer harus meminta scope yang benar saat
+ *   authorization (user reauth dengan scope baru).
+ * - `unapproved_scope` → aplikasi belum mendapatkan approval admin;
+ *   developer harus menghubungi tim Mubarokah ID. User reauth tidak menolong.
  */
 export class ApiError extends MubarokahError {
-  /** Response body mentah */
+  /** Response body mentah dari server */
   public readonly responseBody?: unknown;
 
-  constructor(message: string, statusCode: number, responseBody?: unknown) {
-    super(message, `api_error_${statusCode}`, statusCode);
+  /**
+   * Kode error OAuth-style dari response body (bila ada).
+   *
+   * Contoh: `'insufficient_scope'`, `'unapproved_scope'`, `'token_expired'`,
+   * `'invalid_token'`, `'rate_limit_exceeded'`.
+   */
+  public readonly oauthCode?: string;
+
+  /** `retry_after` dalam detik, bila server mengirimkannya (429) */
+  public readonly retryAfter?: number;
+
+  constructor(
+    message: string,
+    statusCode: number,
+    responseBody?: unknown,
+    oauthCode?: string,
+    retryAfter?: number,
+  ) {
+    // Pakai oauthCode sebagai `code` kalau ada, fallback ke `api_error_<status>`
+    super(message, oauthCode ?? `api_error_${statusCode}`, statusCode);
     this.name = 'ApiError';
     this.responseBody = responseBody;
+    this.oauthCode = oauthCode;
+    this.retryAfter = retryAfter;
   }
 
-  /** Apakah error karena token expired / unauthorized */
+  /** HTTP 401 atau oauthCode mengindikasikan token invalid/expired */
   isUnauthorized(): boolean {
-    return this.statusCode === 401;
+    return (
+      this.statusCode === 401 ||
+      this.oauthCode === 'token_expired' ||
+      this.oauthCode === 'invalid_token'
+    );
   }
 
-  /** Apakah error karena forbidden (misal scope belum di-approve admin) */
+  /** HTTP 403 apa pun (generic forbidden) */
   isForbidden(): boolean {
     return this.statusCode === 403;
   }
+
+  /**
+   * Access token tidak memiliki scope yang diperlukan.
+   *
+   * Remediasi: minta user login ulang dengan scope yang benar di
+   * authorization URL.
+   */
+  isInsufficientScope(): boolean {
+    return this.oauthCode === 'insufficient_scope';
+  }
+
+  /**
+   * Aplikasi client belum mendapatkan approval admin untuk scope sensitif
+   * (misal `detail-user`).
+   *
+   * Remediasi: hubungi tim Mubarokah ID untuk approval. User reauth tidak
+   * akan menyelesaikan masalah ini.
+   */
+  isUnapprovedScope(): boolean {
+    return this.oauthCode === 'unapproved_scope';
+  }
+
+  /**
+   * Access token sudah kadaluwarsa — gunakan refresh token untuk
+   * mendapatkan token baru.
+   */
+  isTokenExpired(): boolean {
+    return this.oauthCode === 'token_expired';
+  }
+
+  /** HTTP 429 rate-limit. `retryAfter` (detik) bisa dibaca. */
+  isRateLimited(): boolean {
+    return this.statusCode === 429 || this.oauthCode === 'rate_limit_exceeded';
+  }
 }
 
 /**
- * Error untuk konfigurasi yang tidak valid.
+ * Error untuk konfigurasi yang tidak valid saat inisialisasi client.
  */
 export class ConfigError extends MubarokahError {
   constructor(message: string) {

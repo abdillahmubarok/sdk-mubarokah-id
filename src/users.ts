@@ -18,7 +18,7 @@ import { ApiError } from './errors.js';
  *
  * // Ambil detail lengkap user (scope: detail-user, perlu approval admin)
  * const details = await client.users.getUserDetails(accessToken);
- * console.log(details.phone, details.address);
+ * console.log(details.phone_number, details.address);
  * ```
  */
 export class UserManager {
@@ -39,25 +39,18 @@ export class UserManager {
    * Scope yang diperlukan: `view-user`
    *
    * Data yang dikembalikan:
-   * - `id` — ID unik user
+   * - `id` — ID unik user (number)
    * - `name` — Nama lengkap
-   * - `email` — Alamat email
-   * - `username` — Username unik
-   * - `profile_picture` — URL foto profil
-   * - `gender` — Jenis kelamin
+   * - `email` — Alamat email (**`null`** untuk user WhatsApp)
+   * - `username` — Username unik (bisa `null`)
+   * - `profile_picture` — URL foto profil (bisa `null`)
+   * - `gender` — Jenis kelamin (bisa `null`)
    *
    * @param accessToken - Access token yang valid dengan scope `view-user`
    * @returns Informasi dasar user
-   * @throws {ApiError} Jika request gagal (token expired, invalid, dll)
-   *
-   * @example
-   * ```typescript
-   * const user = await client.users.getUser(accessToken);
-   *
-   * console.log(`Halo, ${user.name}!`);
-   * console.log(`Email: ${user.email}`);
-   * console.log(`Avatar: ${user.profile_picture}`);
-   * ```
+   * @throws {ApiError} Jika request gagal. Gunakan `isUnauthorized()`,
+   *   `isInsufficientScope()`, `isUnapprovedScope()`, `isRateLimited()`
+   *   untuk mendeteksi kondisi spesifik.
    */
   async getUser(accessToken: string): Promise<UserInfo> {
     return this.apiRequest<UserInfo>('/api/user', accessToken);
@@ -73,32 +66,32 @@ export class UserManager {
    * Endpoint: `GET /api/user/details`
    * Scope yang diperlukan: `detail-user`
    *
-   * ⚠️ **Perlu Approval Admin**: Endpoint ini hanya bisa diakses jika
-   * aplikasi Anda sudah mendapatkan persetujuan administratif untuk
-   * scope `detail-user`.
+   * ⚠️ **Perlu Approval Admin**: hanya bisa diakses bila aplikasi Anda sudah
+   * mendapatkan persetujuan administratif untuk scope `detail-user`. Tanpa
+   * approval, akan mengembalikan 403 `unapproved_scope`.
    *
    * Data tambahan di atas `getUser()`:
-   * - `phone` — Nomor telepon
-   * - `date_of_birth` — Tanggal lahir
-   * - `place_of_birth` — Tempat lahir
-   * - `address` — Alamat lengkap
-   * - `bio` — Biografi
+   * - `phone_number` — Nomor telepon terverifikasi (bisa `null`)
+   * - `date_of_birth`, `place_of_birth`, `address`, `bio` — semua bisa `null`
    *
    * @param accessToken - Access token yang valid dengan scope `detail-user`
    * @returns Informasi detail user
-   * @throws {ApiError} Jika request gagal
-   *   - `403` jika scope belum di-approve admin
-   *   - `401` jika token expired/invalid
+   * @throws {ApiError} Jika request gagal:
+   *   - `isInsufficientScope()` → minta user reauth dengan scope yang benar
+   *   - `isUnapprovedScope()` → hubungi admin Mubarokah ID
+   *   - `isUnauthorized()` → refresh token atau minta login ulang
    *
    * @example
    * ```typescript
    * try {
    *   const details = await client.users.getUserDetails(accessToken);
-   *   console.log(`Alamat: ${details.address}`);
-   *   console.log(`Telepon: ${details.phone}`);
    * } catch (error) {
-   *   if (error instanceof ApiError && error.isForbidden()) {
-   *     console.log('Aplikasi belum mendapat approval untuk detail-user scope');
+   *   if (error instanceof ApiError) {
+   *     if (error.isUnapprovedScope()) {
+   *       showAdminApprovalRequiredMessage();
+   *     } else if (error.isInsufficientScope()) {
+   *       redirectToReauthWithDetailScope();
+   *     }
    *   }
    * }
    * ```
@@ -127,21 +120,54 @@ export class UserManager {
     });
 
     if (!response.ok) {
-      let body: unknown;
-      try {
-        body = await response.json();
-      } catch {
-        body = await response.text();
-      }
-
-      const message =
-        typeof body === 'object' && body !== null && 'message' in body
-          ? String((body as Record<string, unknown>).message)
-          : `API request failed with status ${response.status}`;
-
-      throw new ApiError(message, response.status, body);
+      throw await this.buildApiError(response);
     }
 
     return (await response.json()) as T;
+  }
+
+  /**
+   * Parse body response error menjadi `ApiError` yang kaya metadata.
+   *
+   * Berdasarkan dokumentasi Mubarokah ID:
+   * - 401: `{ "error": "token_expired" | "token_invalid", ... }` atau `{ "message": "Unauthenticated." }`
+   * - 403: `{ "error": "insufficient_scope" | "unapproved_scope" | "permission_denied", ... }`
+   * - 429: `{ "error": "rate_limit_exceeded", "retry_after": 60 }`
+   */
+  private async buildApiError(response: Response): Promise<ApiError> {
+    let body: unknown;
+    try {
+      body = await response.json();
+    } catch {
+      try {
+        body = await response.text();
+      } catch {
+        body = undefined;
+      }
+    }
+
+    const parsed = (typeof body === 'object' && body !== null
+      ? (body as Record<string, unknown>)
+      : {}) as Record<string, unknown>;
+
+    const oauthCode =
+      typeof parsed.error === 'string' ? (parsed.error as string) : undefined;
+
+    const message =
+      (typeof parsed.message === 'string' && parsed.message) ||
+      (typeof parsed.error_description === 'string' && parsed.error_description) ||
+      oauthCode ||
+      `API request failed with status ${response.status}`;
+
+    // `Retry-After` header atau field body
+    let retryAfter: number | undefined;
+    const retryHeader = response.headers.get('Retry-After');
+    if (retryHeader && /^\d+$/.test(retryHeader)) {
+      retryAfter = Number.parseInt(retryHeader, 10);
+    } else if (typeof parsed.retry_after === 'number') {
+      retryAfter = parsed.retry_after;
+    }
+
+    return new ApiError(message, response.status, body, oauthCode, retryAfter);
   }
 }
