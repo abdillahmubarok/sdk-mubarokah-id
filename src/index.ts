@@ -34,7 +34,7 @@
 export { MubarokahClient } from './client.js';
 
 // — Sub-Modules ——————————————————————————————————————
-export { OAuthManager } from './oauth.js';
+export { OAuthManager, tokenResponseToHandle } from './oauth.js';
 export { UserManager } from './users.js';
 
 // — Error Classes ————————————————————————————————————
@@ -46,7 +46,7 @@ export {
 } from './errors.js';
 
 // — Token Store ——————————————————————————————————————
-export { MemoryTokenStore } from './token-store.js';
+export { MemoryTokenStore, tokenResponseToStored, isStoredTokenExpired } from './token-store.js';
 
 // — PKCE Utilities ———————————————————————————————————
 export {
@@ -66,6 +66,7 @@ export type {
   ResolvedConfig,
   TokenResponse,
   StoredTokens,
+  AutoRefreshHandle,
   UserInfo,
   UserDetails,
   AuthorizationUrlOptions,
@@ -78,3 +79,6 @@ export type {
 
 // — Enums & Constants ————————————————————————————————
 export { GrantType, Scope, Prompt, DEFAULTS } from './types.js';
+
+// — Type Guards ——————————————————————————————————————
+export { isWhatsAppUser, hasEmail } from './types.js';
